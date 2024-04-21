@@ -1,0 +1,22 @@
+# Sort imports
+reorder_imports = true
+#imports_granularity = "Module"
+#group_imports = "StdExternalCrate"
+
+# Indent with tabs
+#indent_style = "Block"
+hard_tabs = true
+
+# Line endings
+newline_style = "Unix"
+
+# Convert multi-line to single-line comments
+#normalize_comments = true
+
+# Convert documentation to new format
+#normalize_doc_attributes = true
+
+# Preferences
+#spaces_around_ranges = true
+#trailing_comma = "Never"
+#trailing_semicolon = true

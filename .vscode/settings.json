@@ -1,0 +1,8 @@
+{
+	"editor.formatOnSave": true,
+	"editor.defaultFormatter": "rust-lang.rust-analyzer",
+	"editor.inlayHints.enabled": "offUnlessPressed",
+	"rust-analyzer.linkedProjects": [
+		"Cargo.toml"
+	]
+}

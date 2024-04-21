@@ -1,0 +1,8 @@
+# https://github.com/github/gitignore/blob/main/Rust.gitignore
+
+# Builds
+debug/
+target/
+
+# Formatter backups
+**/*.rs.bk
