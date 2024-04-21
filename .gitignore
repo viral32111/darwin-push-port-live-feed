@@ -6,3 +6,6 @@ target/
 
 # Formatter backups
 **/*.rs.bk
+
+# Environment variables
+.env*
