@@ -1,7 +1,6 @@
 # Darwin Push Port Live Feed
 
-[![CI](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/codeql.yml/badge.svg)](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/codeql.yml)
+[![Analyse](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/analyse.yml/badge.svg)](https://github.com/viral32111/darwin-push-port-live-feed/actions/workflows/analyse.yml)
 ![GitHub tag (with filter)](https://img.shields.io/github/v/tag/viral32111/darwin-push-port-live-feed?label=Latest)
 ![GitHub repository size](https://img.shields.io/github/repo-size/viral32111/darwin-push-port-live-feed?label=Size)
 ![GitHub release downloads](https://img.shields.io/github/downloads/viral32111/darwin-push-port-live-feed/total?label=Downloads)
