@@ -1,13 +1,16 @@
+use crate::stomp::header::Headers;
+use crate::xml;
+use crate::xml::element::Element;
+
+use self::frame::Frame;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::thread::{spawn, JoinHandle};
 use std::time::Duration;
 
-use self::frame::Frame;
-
-mod frame;
-mod header;
+pub mod frame;
+pub mod header;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -144,17 +147,77 @@ fn recieve_bytes(mut tcp_stream: TcpStream) -> Result<(), Box<dyn Error>> {
 fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
 	println!("{}", frame.command);
 
-	for (name, value) in frame.headers {
+	for (name, value) in frame.headers.clone() {
 		println!("{}: {}", name, value);
 	}
 
 	println!("");
 
 	if frame.body.is_some() {
-		println!("{}", frame.body.unwrap());
+		let body = frame.body.unwrap();
+
+		let content_type = frame.headers.iter().find_map(|(name, value)| {
+			if name.eq(Headers::ContentType.as_str()) {
+				return Some(value.to_string());
+			}
+
+			None
+		});
+
+		if content_type.is_some() && content_type.unwrap().eq("application/xml") {
+			let document = xml::parse(&body)?;
+
+			/*
+			println!("XML declaration:");
+			println!(" Version: {}", document.declaration.version);
+			println!(" Encoding: {}", document.declaration.encoding);
+			println!(" Standalone: {}", document.declaration.standalone);
+			println!("");
+			*/
+
+			recursively_print_element_children(&document.root, 0)?;
+		} else {
+			println!("{}", body);
+		}
 	}
 
 	println!("\n---------------------------------\n");
+
+	Ok(())
+}
+
+fn recursively_print_element_children(element: &Element, depth: u32) -> Result<(), Box<dyn Error>> {
+	if element.name.is_some() {
+		println!(
+			"{}<{}>",
+			" ".repeat(depth as usize),
+			element.name.as_ref().unwrap()
+		);
+	}
+
+	if element.value.is_some() {
+		println!(
+			"{}{}",
+			" ".repeat(depth as usize),
+			element.value.as_ref().unwrap()
+		);
+	}
+
+	if element.attributes.is_some() {
+		let attributes = element.attributes.as_ref().unwrap();
+
+		for (name, value) in attributes.map.iter() {
+			println!(" {}* {}: {}", " ".repeat(depth as usize), name, value);
+		}
+	}
+
+	if element.children.is_some() {
+		let children = element.children.as_ref().unwrap();
+
+		for child in children.iter() {
+			recursively_print_element_children(child, depth + 1)?;
+		}
+	}
 
 	Ok(())
 }

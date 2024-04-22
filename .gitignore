@@ -9,3 +9,6 @@ target/
 
 # Environment variables
 .env*
+
+# Example payloads
+*.xml

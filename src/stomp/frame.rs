@@ -1,7 +1,6 @@
+use crate::stomp::header::Headers;
 use flate2::read::GzDecoder;
 use std::{error::Error, io::Read, str::from_utf8};
-
-use crate::stomp::header::Headers;
 
 // https://stomp.github.io/stomp-specification-1.2.html
 
@@ -66,6 +65,7 @@ pub fn parse(buffer: &mut Vec<u8>) -> Result<Option<(Frame, usize)>, Box<dyn Err
 				return None;
 			}
 
+			// Headers are colon delimited key-value pairs
 			let (name, value) = line.split_once(":")?;
 
 			// Ignore headers with no name
@@ -91,10 +91,10 @@ pub fn parse(buffer: &mut Vec<u8>) -> Result<Option<(Frame, usize)>, Box<dyn Err
 	// Find the size of the body
 	let content_length = headers.iter().find_map(|(name, value)| {
 		if name.eq(Headers::ContentLength.as_str()) {
-			value.parse::<usize>().ok()
-		} else {
-			None
+			return value.parse::<usize>().ok();
 		}
+
+		None
 	});
 
 	// Frame is finished if we don't have a body

@@ -1,8 +1,9 @@
-use std::error::Error;
-
 use env_file_reader::read_file;
+use std::{error::Error, fs::read, str::from_utf8};
+use xml::element::Element;
 
 mod stomp;
+mod xml;
 
 fn main() -> Result<(), Box<dyn Error>> {
 	let environment_variables = read_file(".env")?;
@@ -26,9 +27,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 	connection.authenticate(username, password)?;
 
 	connection.subscribe(0, "/topic/darwin.pushport-v16")?;
+	//connection.subscribe(1, "/topic/darwin.status")?;
 
 	connection.wait()?;
 	connection.close()?;
 
-	return Ok(());
+	Ok(())
 }
