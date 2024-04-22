@@ -6,6 +6,7 @@ use self::frame::Frame;
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::process::exit;
 use std::thread::{spawn, JoinHandle};
 use std::time::Duration;
 
@@ -145,15 +146,11 @@ fn recieve_bytes(mut tcp_stream: TcpStream) -> Result<(), Box<dyn Error>> {
 
 /// Displays a STOMP frame in the console.
 fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
-	println!("{}", frame.command);
-
-	for (name, value) in frame.headers.clone() {
-		println!("{}: {}", name, value);
+	if frame.command == "CONNECTED" {
+		return Ok(());
 	}
 
-	println!("");
-
-	if frame.body.is_some() {
+	if frame.command == "MESSAGE" && frame.body.is_some() {
 		let body = frame.body.unwrap();
 
 		let content_type = frame.headers.iter().find_map(|(name, value)| {
@@ -167,21 +164,63 @@ fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
 		if content_type.is_some() && content_type.unwrap().eq("application/xml") {
 			let document = xml::parse(&body)?;
 
-			/*
-			println!("XML declaration:");
-			println!(" Version: {}", document.declaration.version);
-			println!(" Encoding: {}", document.declaration.encoding);
-			println!(" Standalone: {}", document.declaration.standalone);
-			println!("");
-			*/
+			if document.root.name.is_some()
+				&& document.root.name.as_ref().unwrap() == "Pport"
+				&& document.root.attributes.is_some()
+				&& document.root.children.is_some()
+			{
+				let timestamp = document
+					.root
+					.attributes
+					.as_ref()
+					.unwrap()
+					.get("ts")
+					.unwrap();
+				println!("\n@ {}", timestamp);
 
-			recursively_print_element_children(&document.root, 0)?;
-		} else {
-			println!("{}", body);
+				let pport = document.root.children.as_ref().unwrap();
+				if pport.len() != 1 {
+					println!("Pport has more than one child?");
+					recursively_print_element_children(&document.root, 0)?;
+
+					exit(0);
+				}
+
+				let ur = pport.first().unwrap();
+				if ur.name.is_some() && ur.name.as_ref().unwrap() == "uR" {
+					let children = ur.children.as_ref().unwrap();
+
+					for child in children.iter() {
+						recursively_print_element_children(child, 0)?;
+					}
+				}
+			} else {
+				println!("XML declaration:");
+				println!(" Version: {}", document.declaration.version);
+				println!(" Encoding: {}", document.declaration.encoding);
+				println!(" Standalone: {}", document.declaration.standalone);
+
+				println!("");
+				recursively_print_element_children(&document.root, 0)?;
+
+				exit(0);
+			}
 		}
-	}
+	} else {
+		println!("{}", frame.command);
 
-	println!("\n---------------------------------\n");
+		for (name, value) in frame.headers.clone() {
+			println!("{}: {}", name, value);
+		}
+
+		println!("");
+
+		if frame.body.is_some() {
+			println!("{}", frame.body.unwrap());
+		}
+
+		exit(0);
+	}
 
 	Ok(())
 }
@@ -207,7 +246,7 @@ fn recursively_print_element_children(element: &Element, depth: u32) -> Result<(
 		let attributes = element.attributes.as_ref().unwrap();
 
 		for (name, value) in attributes.map.iter() {
-			println!(" {}* {}: {}", " ".repeat(depth as usize), name, value);
+			println!(" {}{}: {}", " ".repeat(depth as usize), name, value);
 		}
 	}
 

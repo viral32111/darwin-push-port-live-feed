@@ -117,7 +117,7 @@ pub fn parse(buffer: &mut Vec<u8>) -> Result<Option<(Frame, usize)>, Box<dyn Err
 				headers,
 				body: None,
 			},
-			headers_end_position + 1, // Skip the double LF
+			headers_end_position + 2, // Skip the double LF
 		)));
 	}
 
@@ -133,7 +133,7 @@ pub fn parse(buffer: &mut Vec<u8>) -> Result<Option<(Frame, usize)>, Box<dyn Err
 	decompressor.read_to_string(&mut body)?;
 
 	// Ensure we're terminated with a NT + LF
-	if buffer.len() < body_end_position + 1 {
+	if buffer.len() < body_end_position + 2 {
 		return Ok(None); // Wait for more data
 	}
 	if buffer[body_end_position] != 0x00 {

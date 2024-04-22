@@ -1,6 +1,5 @@
 use env_file_reader::read_file;
-use std::{error::Error, fs::read, str::from_utf8};
-use xml::element::Element;
+use std::error::Error;
 
 mod stomp;
 mod xml;
