@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 env-file-reader = "0.3.0"
-flate2 = "1.0.28"
+flate2 = "1.0.30"
