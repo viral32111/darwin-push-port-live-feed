@@ -68,7 +68,7 @@ jobs:
           echo "SHA-256 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha256")'"
 
           sha512sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.sha512"
-          echo "SHA-512 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha512')'"
+          echo "SHA-512 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha512")'"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
