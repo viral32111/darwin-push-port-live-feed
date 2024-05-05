@@ -111,7 +111,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-          pattern: release_stable_*-unknown-linux-musl # We only build for stable Linux (musl) releases
+          pattern: release_stable_* # We only build for stable releases
           path: artifacts
 
       - name: Create Docker context
