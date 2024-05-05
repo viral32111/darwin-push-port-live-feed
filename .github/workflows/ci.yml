@@ -37,7 +37,7 @@ jobs:
 
       - name: Setup Rust
         run: |
-          rustup set profile complete
+          rustup set profile minimal
           rustup toolchain install ${{ matrix.toolchain }}
           rustup target add ${{ matrix.target }}
 
