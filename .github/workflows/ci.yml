@@ -56,7 +56,7 @@ jobs:
 
       - name: Calculate checksums
         run: |
-          export BINARY_PATH=$(find target -type f -name darwin-push-port-live-feed)
+          export BINARY_PATH=$(find target -type f -name 'darwin-push-port-live-feed*')
           echo "Found binary at '${BINARY_PATH}'"
 
           md5sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.md5"
