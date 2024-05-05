@@ -35,6 +35,12 @@
 	"terminal.integrated.smoothScrolling": true,
 	"workbench.list.smoothScrolling": true,
 
+	// Indent with spaces in YAML files
+	"[yaml]": {
+		"editor.insertSpaces": true,
+		"editor.tabSize": 2,
+	},
+
 	// Check code & documentation for spelling mistakes
 	"cSpell.language": "en-GB",
 	"cSpell.files": [

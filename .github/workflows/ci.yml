@@ -1,0 +1,247 @@
+name: CI
+
+on:
+  push:
+    paths:
+      - '**'
+    branches:
+      - '**'
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile:
+          - dev
+          - release
+        toolchain:
+          - stable
+          - beta
+          - nightly
+        target:
+          - x86_64-unknown-linux-gnu # Linux (glibc) on 64-bit x86
+          - x86_64-unknown-linux-musl # Linux (musl) on 64-bit x86
+          - aarch64-unknown-linux-gnu # Linux (glibc) on 64-bit ARM
+          - aarch64-unknown-linux-musl # Linux (musl) on 64-bit ARM
+          - x86_64-pc-windows-gnu # Windows on 64-bit x86
+    permissions:
+      contents: read
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        run: |
+          rustup set profile complete
+          rustup toolchain install ${{ matrix.toolchain }}
+          rustup target add ${{ matrix.target }}
+
+      - name: Build code
+        run: cargo build --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+
+      - name: Test code
+        run: cargo test --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+
+      - name: Generate documentation
+        run: cargo doc --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+
+      - name: Calculate checksums
+        run: |
+          export BINARY_PATH=$(find target -type f -name darwin-push-port-live-feed)
+          echo "Found binary at '${BINARY_PATH}'"
+
+          md5sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.md5"
+          echo "MD5 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.md5")'"
+
+          sha1sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.sha1"
+          echo "SHA-1 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha1")'"
+
+          sha256sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.sha256"
+          echo "SHA-256 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha256")'"
+
+          sha512sum "${BINARY_PATH}" | cut --delimiter ' ' --fields 1 | tee "${BINARY_PATH}.sha512"
+          echo "SHA-512 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha512')'"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.profile }}_${{ matrix.toolchain }}_${{ matrix.target }}
+          path: target
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: build
+    concurrency:
+      group: docker
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
+      - name: Login to GitHub Container Registry
+        if: ${{ github.event_name != 'pull_request' && !startsWith( github.ref_name, 'dependabot/' ) }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release_stable_*-unknown-linux-musl # We only build for stable Linux (musl) releases
+          path: artifacts
+
+      - name: Create Docker context
+        run: |
+          mkdir --verbose --parents context
+          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed context/amd64/darwin-push-port-live-feed
+          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed context/arm64/darwin-push-port-live-feed
+
+      - name: Create metadata for Docker image
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/darwin-push-port-live-feed
+          flavor: latest=true
+          tags: |
+            type=ref,event=pr
+            type=ref,event=branch
+            type=semver,pattern={{major}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+          labels: |
+            org.opencontainers.image.title=Darwin Push Port Live Feed
+            org.opencontainers.image.vendor=${{ github.repository_owner }}
+            com.docker.extension.publisher-url=https://viral32111.com
+
+      - name: Build & push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          push: ${{ github.event_name != 'pull_request' && !startsWith( github.ref_name, 'dependabot/' ) }}
+          file: Dockerfile
+          context: context
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          no-cache: true
+          pull: true
+
+      - name: Delete stale Docker images
+        if: ${{ github.event_name != 'pull_request' && !startsWith( github.ref_name, 'dependabot/' ) }}
+        uses: actions/delete-package-versions@v4
+        with:
+          package-type: container
+          package-name: darwin-push-port-live-feed
+          delete-only-untagged-versions: true
+          min-versions-to-keep: 1
+          ignore-versions: latest
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v3
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: release_stable_x86_64-unknown-linux-gnu # We only deploy for a single target
+          path: target
+
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: target/doc
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release_stable_* # We only publish stable releases
+          path: artifacts
+
+      - name: Organise artifacts
+        run: |
+          mkdir --verbose --parents assets
+          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_glibc
+          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_musl
+          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_glibc
+          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_musl
+          cp --verbose --archive artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_windows_x86_64.exe
+
+      - name: Merge checksums
+        run: |
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/MD5SUMS.txt
+
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA1SUMS.txt
+
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA256SUMS.txt
+
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA512SUMS.txt
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          tag_name: ${{ github.ref_name }}
+          files: assets/*
+          token: ${{ secrets.GITHUB_TOKEN }}

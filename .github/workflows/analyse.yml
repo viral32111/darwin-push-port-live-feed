@@ -1,3 +1,5 @@
+# CodeQL does not support Rust yet, so we're using Clippy instead.
+
 name: Analyse
 
 on:
@@ -6,7 +8,11 @@ on:
       - '**'
     branches:
       - '**'
+    tags:
+      - '*.*.*'
   pull_request:
+    paths:
+      - '**'
     branches:
       - '**'
   schedule:
@@ -24,23 +30,18 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      - name: Install toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          components: clippy
-          override: true
+      - name: Setup Rust
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup component add clippy
 
       - name: Install dependencies
         run: cargo install clippy-sarif sarif-fmt
 
       - name: Analyse code
-        run:
-          cargo clippy
-          --all-features
-          --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
         continue-on-error: true
+        run: cargo clippy --all-features --message-format=json | clippy-sarif | tee rust-clippy-results.sarif | sarif-fmt
 
       - name: Upload results
         uses: github/codeql-action/upload-sarif@v3

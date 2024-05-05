@@ -4,5 +4,6 @@
 		"streetsidesoftware.code-spell-checker", // Spell Checker
 		"VisualStudioExptTeam.vscodeintellicode", // IntelliSense
 		"mikestead.dotenv", // .env
+		"redhat.vscode-yaml" // YAML
 	]
 }
