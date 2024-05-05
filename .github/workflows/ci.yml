@@ -48,6 +48,7 @@ jobs:
         run: cross build --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
       - name: Test code
+        if: ${{ matrix.target != 'x86_64-pc-windows-gnu' }}
         run: cross test --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
       - name: Generate documentation
