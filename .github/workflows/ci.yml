@@ -116,7 +116,7 @@ jobs:
 
       - name: Create Docker context
         run: |
-          mkdir --verbose --parents context
+          mkdir --verbose --parents context/amd64 context/arm64
           cp --verbose --archive artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed context/amd64/darwin-push-port-live-feed
           cp --verbose --archive artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed context/arm64/darwin-push-port-live-feed
 
