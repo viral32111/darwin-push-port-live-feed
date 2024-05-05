@@ -1,8 +1,47 @@
 {
+	// Title
+	"window.title": "Darwin Push Port Live Feed",
+
+	// Tidy up code on save
 	"editor.formatOnSave": true,
 	"editor.defaultFormatter": "rust-lang.rust-analyzer",
-	"editor.inlayHints.enabled": "offUnlessPressed",
 	"rust-analyzer.linkedProjects": [
 		"Cargo.toml"
+	],
+
+	// Indent with tabs
+	"editor.detectIndentation": true,
+	"editor.insertSpaces": false,
+	"editor.indentSize": "tabSize",
+	"editor.tabSize": 4,
+
+	// Linux compatible line endings
+	"files.eol": "\n",
+
+	// Force file type association
+	"files.associations": {
+		"*.env*": "dotenv"
+	},
+
+	// Quality-of-life features
+	"editor.inlayHints.enabled": "offUnlessPressed",
+	"editor.bracketPairColorization.enabled": true,
+
+	// Smoother animations
+	"editor.smoothScrolling": true,
+	"editor.cursorBlinking": "smooth",
+	"editor.cursorStyle": "line-thin",
+	"editor.cursorSmoothCaretAnimation": "on",
+	"terminal.integrated.smoothScrolling": true,
+	"workbench.list.smoothScrolling": true,
+
+	// Check code & documentation for spelling mistakes
+	"cSpell.language": "en-GB",
+	"cSpell.files": [
+		"src/**/*",
+		"**/*.md"
+	],
+	"cSpell.words": [
+		"Addrs"
 	]
 }

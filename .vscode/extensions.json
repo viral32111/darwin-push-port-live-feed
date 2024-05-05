@@ -1,5 +1,8 @@
 {
 	"recommendations": [
-		"rust-lang.rust-analyzer"
+		"rust-lang.rust-analyzer", // Rust
+		"streetsidesoftware.code-spell-checker", // Spell Checker
+		"VisualStudioExptTeam.vscodeintellicode", // IntelliSense
+		"mikestead.dotenv", // .env
 	]
 }
