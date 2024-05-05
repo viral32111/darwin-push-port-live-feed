@@ -4,12 +4,14 @@ pub struct Attributes {
 }
 
 impl Attributes {
+	/*
 	/// Checks if an attribute exists.
 	pub fn has(&self, name: &str) -> bool {
 		self.map
 			.iter()
 			.any(|(attribute_name, _)| attribute_name.eq(name))
 	}
+	*/
 
 	/// Gets the value of an attribute.
 	pub fn get(&self, name: &str) -> Option<String> {
@@ -22,6 +24,7 @@ impl Attributes {
 		})
 	}
 
+	/*
 	/// Gets the value of an attribute, ignoring case of the name.
 	pub fn get_case_insensitive(&self, name: &str) -> Option<String> {
 		self.map.iter().find_map(|(attribute_name, value)| {
@@ -32,6 +35,7 @@ impl Attributes {
 			None
 		})
 	}
+	*/
 }
 
 /// Parses a string of attributes into a map of key-value pairs.

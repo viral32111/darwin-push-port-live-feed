@@ -41,14 +41,17 @@ jobs:
           rustup toolchain install ${{ matrix.toolchain }}
           rustup target add ${{ matrix.target }}
 
+      - name: Install cross-compiler
+        run: cargo install cross
+
       - name: Build code
-        run: cargo build --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+        run: cross build --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
       - name: Test code
-        run: cargo test --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+        run: cross test --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
       - name: Generate documentation
-        run: cargo doc --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
+        run: cross doc --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
       - name: Calculate checksums
         run: |
@@ -106,14 +109,15 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          merge-multiple: true
           pattern: release_stable_*-unknown-linux-musl # We only build for stable Linux (musl) releases
           path: artifacts
 
       - name: Create Docker context
         run: |
           mkdir --verbose --parents context
-          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed context/amd64/darwin-push-port-live-feed
-          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed context/arm64/darwin-push-port-live-feed
+          cp --verbose --archive artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed context/amd64/darwin-push-port-live-feed
+          cp --verbose --archive artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed context/arm64/darwin-push-port-live-feed
 
       - name: Create metadata for Docker image
         id: metadata
@@ -183,7 +187,7 @@ jobs:
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v2
         with:
-          path: target/doc
+          path: target/x86_64-unknown-linux-gnu/doc
 
       - name: Deploy to GitHub Pages
         id: deployment
@@ -200,43 +204,44 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          merge-multiple: true
           pattern: release_stable_* # We only publish stable releases
           path: artifacts
 
       - name: Organise artifacts
         run: |
           mkdir --verbose --parents assets
-          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_glibc
-          cp --verbose --archive artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_musl
-          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_glibc
-          cp --verbose --archive artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_musl
-          cp --verbose --archive artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_windows_x86_64.exe
+          cp --verbose --archive artifacts/x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_glibc
+          cp --verbose --archive artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_x86_64_musl
+          cp --verbose --archive artifacts/aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_glibc
+          cp --verbose --archive artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_linux_aarch64_musl
+          cp --verbose --archive artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed assets/darwin-push-port-live-feed_windows_x86_64.exe
 
       - name: Merge checksums
         run: |
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/MD5SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/MD5SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/MD5SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/MD5SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/MD5SUMS.txt
+          echo "$(cat artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.md5) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/MD5SUMS.txt
 
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA1SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA1SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA1SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA1SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA1SUMS.txt
+          echo "$(cat artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha1) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA1SUMS.txt
 
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA256SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA256SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA256SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA256SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA256SUMS.txt
+          echo "$(cat artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha256) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA256SUMS.txt
 
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA512SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA512SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA512SUMS.txt
-          echo "$(cat artifacts/release_stable_aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA512SUMS.txt
-          echo "$(cat artifacts/release_stable_x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_glibc" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/x86_64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_x86_64_musl" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_glibc" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/aarch64-unknown-linux-musl/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_linux_aarch64_musl" | tee --append assets/SHA512SUMS.txt
+          echo "$(cat artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.sha512) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA512SUMS.txt
 
       - name: Create draft release
         uses: softprops/action-gh-release@v1
