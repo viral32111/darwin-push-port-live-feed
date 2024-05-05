@@ -48,6 +48,8 @@
 		"**/*.md"
 	],
 	"cSpell.words": [
-		"Addrs"
+		"Addrs",
+		"Pport",
+		"pushport"
 	]
 }

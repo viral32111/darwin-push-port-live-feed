@@ -82,10 +82,11 @@ checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
 
 [[package]]
 name = "darwin-push-port-live-feed"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "env-file-reader",
- "flate2",
+ "viral32111-stomp",
+ "viral32111-xml",
 ]
 
 [[package]]
@@ -566,6 +567,17 @@ name = "unicode-xid"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
+
+[[package]]
+name = "viral32111-stomp"
+version = "0.1.3"
+dependencies = [
+ "flate2",
+]
+
+[[package]]
+name = "viral32111-xml"
+version = "0.1.0"
 
 [[package]]
 name = "wasi"

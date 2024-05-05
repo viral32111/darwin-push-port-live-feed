@@ -1,8 +1,20 @@
 [package]
+version = "0.1.3"
 name = "darwin-push-port-live-feed"
-version = "0.1.2"
+description = "Client to receive updates from the National Rail Darwin Push Port Live Feed."
+homepage = "https://github.com/viral32111/darwin-push-port-live-feed"
+documentation = "https://viral32111.github.io/darwin-push-port-live-feed/darwin-push-port-live-feed"
+authors = [ "viral32111 <contact@viral32111.com>" ]
+readme = "README.md"
+license = "AGPL-3.0-only"
+keywords = [ "microservice", "national-rail", "british-transport" ]
+categories = [ "command-line-utilities", "database", "caching", "network-programming", "data-structures" ]
+include = [ "src", "README.md", "LICENSE.txt" ]
+publish = false
 edition = "2021"
+rust-version = "1.77"
 
 [dependencies]
 env-file-reader = "0.3.0"
-flate2 = "1.0.30"
+viral32111-stomp = { path = "../stomp", version = "0.1.3" }
+viral32111-xml = { path = "../xml", version = "0.1.0" }

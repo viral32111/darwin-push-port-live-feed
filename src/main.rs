@@ -1,10 +1,7 @@
 use env_file_reader::read_file;
 use std::{error::Error, process::exit};
-use stomp::{frame::Frame, header::Headers};
-use xml::element::Element;
-
-mod stomp;
-mod xml;
+use viral32111_stomp::{frame::Frame, header::Headers, open};
+use viral32111_xml::{element::Element, parse};
 
 /*
 service:2024:05:03:G79740:location:ABWDXR:departure:staff = 19:54:00
@@ -37,7 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 		.get("DARWIN_PASSWORD")
 		.expect("Environment variable 'DARWIN_PASSWORD' not present in .env file");
 
-	let mut connection = stomp::open(host, port, None)?;
+	let mut connection = open(host, port, None)?;
 
 	connection.authenticate(username, password)?;
 
@@ -79,7 +76,7 @@ fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
 		});
 
 		if content_type.is_some() && content_type.unwrap().eq("application/xml") {
-			let document = xml::parse(&body)?;
+			let document = parse(&body)?;
 
 			if document.root.name.is_some()
 				&& document.root.name.as_ref().unwrap() == "Pport"
