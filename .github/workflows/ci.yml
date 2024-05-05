@@ -72,7 +72,7 @@ jobs:
           echo "SHA-512 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha512")'"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.profile }}_${{ matrix.toolchain }}_${{ matrix.target }}
           path: target
@@ -111,7 +111,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-          pattern: release_stable_* # We only build for stable releases
+          pattern: 'release_stable_*' # We only build for stable releases
           path: artifacts
 
       - name: Create Docker context
@@ -167,7 +167,7 @@ jobs:
     needs: build
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url }}/help.html
     concurrency:
       group: github-pages
       cancel-in-progress: false
@@ -180,7 +180,7 @@ jobs:
         uses: actions/configure-pages@v3
 
       - name: Download artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: release_stable_x86_64-unknown-linux-gnu # We only deploy for a single target
           path: target
@@ -206,7 +206,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-          pattern: release_stable_* # We only publish stable releases
+          pattern: 'release_stable_*' # We only publish stable releases
           path: artifacts
 
       - name: Organise artifacts
