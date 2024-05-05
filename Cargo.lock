@@ -571,6 +571,8 @@ checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 [[package]]
 name = "viral32111-stomp"
 version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa4cb8bfb8d9f2b4ed44e9da4b72b6f09401086880e0633c5e70cf2a077af01b"
 dependencies = [
  "flate2",
 ]
@@ -578,6 +580,8 @@ dependencies = [
 [[package]]
 name = "viral32111-xml"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a35d9644d84992eb655def4fbf7c6cee02759d13763c7c4f45f6f9d86b7f22c"
 
 [[package]]
 name = "wasi"
