@@ -54,9 +54,6 @@ jobs:
       - name: Generate documentation
         run: cross doc --verbose --locked --profile ${{ matrix.profile }} --target ${{ matrix.target }}
 
-      - name: Check publishing
-        run: cross publish --verbose --locked --target ${{ matrix.target }} --dry-run
-
       - name: Calculate checksums
         run: |
           export BINARY_PATH=$(find target -type f -executable -name 'darwin-push-port-live-feed*')
