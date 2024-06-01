@@ -245,7 +245,7 @@ jobs:
           echo "$(cat artifacts/x86_64-pc-windows-gnu/release/darwin-push-port-live-feed.exe.sha512) darwin-push-port-live-feed_windows_x86_64.exe" | tee --append assets/SHA512SUMS.txt
 
       - name: Create draft release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
           tag_name: ${{ github.ref_name }}
