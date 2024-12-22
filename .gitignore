@@ -12,4 +12,5 @@ target/
 !.env.example
 
 # Example payloads
+data/
 *.xml

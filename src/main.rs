@@ -1,5 +1,5 @@
 use env_file_reader::read_file;
-use std::{error::Error, process::exit};
+use std::{error::Error, path::Path, process::exit};
 use viral32111_stomp::{frame::Frame, header::Headers, open};
 use viral32111_xml::{element::Element, parse};
 
@@ -18,6 +18,11 @@ service:2024:05:03:G79740:location:HTRWAPT:platform = 1
 */
 
 fn main() -> Result<(), Box<dyn Error>> {
+	if !Path::new(".env").exists() {
+		eprintln!("The '.env' file does not exist in the current directory!");
+		exit(1);
+	}
+
 	let environment_variables = read_file(".env")?;
 
 	let host = environment_variables
@@ -35,19 +40,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 		.expect("Environment variable 'DARWIN_PASSWORD' not present in .env file");
 
 	let mut connection = open(host, port, None)?;
-
 	connection.authenticate(username, password)?;
-
 	connection.subscribe(0, "/topic/darwin.pushport-v16")?;
 	//connection.subscribe(1, "/topic/darwin.status")?;
 
 	for frame in connection.frame_receiver.iter() {
 		match frame {
 			Ok(frame) => {
-				print_frame(frame)?;
+				handle_stomp_frame(frame)?;
 			}
 			Err(error) => {
-				eprintln!("Frame receiver error: {}", error);
+				eprintln!("Unable to receive STOMP frame! ({})", error);
 			}
 		}
 	}
@@ -58,16 +61,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 	Ok(())
 }
 
-/// Displays a STOMP frame in the console.
-fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_stomp_frame(frame: Frame) -> Result<(), Box<dyn Error>> {
 	if frame.command == "CONNECTED" {
+		println!("Connected to STOMP server!");
 		return Ok(());
 	}
 
 	if frame.command == "MESSAGE" && frame.body.is_some() {
 		let body = frame.body.unwrap();
 
-		let content_type = frame.headers.iter().find_map(|(name, value)| {
+		let content_type_option = frame.headers.iter().find_map(|(name, value)| {
 			if name.eq(Headers::ContentType.as_str()) {
 				return Some(value.to_string());
 			}
@@ -75,102 +78,76 @@ fn print_frame(frame: Frame) -> Result<(), Box<dyn std::error::Error>> {
 			None
 		});
 
-		if content_type.is_some() && content_type.unwrap().eq("application/xml") {
-			let document = parse(&body)?;
-
-			if document.root.name.is_some()
-				&& document.root.name.as_ref().unwrap() == "Pport"
-				&& document.root.attributes.is_some()
-				&& document.root.children.is_some()
-			{
-				let timestamp = document
-					.root
-					.attributes
-					.as_ref()
-					.unwrap()
-					.get("ts")
-					.unwrap();
-				println!("\n@ {}", timestamp);
-
-				let pport = document.root.children.as_ref().unwrap();
-				if pport.len() != 1 {
-					println!("Pport has more than one child?");
-					recursively_print_element_children(&document.root, 0)?;
-
-					exit(0);
-				}
-
-				let ur = pport.first().unwrap();
-				if ur.name.is_some() && ur.name.as_ref().unwrap() == "uR" {
-					let children = ur.children.as_ref().unwrap();
-
-					for child in children.iter() {
-						recursively_print_element_children(child, 0)?;
-					}
-				}
-			} else {
-				println!("XML declaration:");
-				println!(" Version: {}", document.declaration.version);
-				println!(" Encoding: {}", document.declaration.encoding);
-				println!(" Standalone: {}", document.declaration.standalone);
-
-				println!("");
-				recursively_print_element_children(&document.root, 0)?;
-
-				exit(0);
-			}
-		}
-	} else {
-		println!("{}", frame.command);
-
-		for (name, value) in frame.headers.clone() {
-			println!("{}: {}", name, value);
+		if content_type_option.is_none() {
+			return Err("No content type specified in message!".into());
 		}
 
-		println!("");
-
-		if frame.body.is_some() {
-			println!("{}", frame.body.unwrap());
+		let content_type = content_type_option.unwrap();
+		if !content_type.eq("application/xml") {
+			return Err(format!("Unexpected content type '{}'", content_type).into());
 		}
 
-		exit(0);
+		handle_stomp_xml_body(body)?;
+
+		return Ok(());
+	}
+
+	// Dump unknown STOMP frames
+	println!("{}", frame.command);
+	for (name, value) in frame.headers.clone() {
+		println!("{}: {}", name, value);
+	}
+	println!("");
+	if frame.body.is_some() {
+		println!("{}", frame.body.unwrap());
 	}
 
 	Ok(())
 }
 
-fn recursively_print_element_children(element: &Element, depth: u32) -> Result<(), Box<dyn Error>> {
-	if element.name.is_some() {
-		println!(
-			"{}<{}>",
-			" ".repeat(depth as usize),
-			element.name.as_ref().unwrap()
-		);
+fn handle_stomp_xml_body(body: String) -> Result<(), Box<dyn std::error::Error>> {
+	let document = parse(&body)?;
+
+	let root_name = document.root.name.as_ref();
+	if root_name.is_none() {
+		return Err("Root element has no name!".into());
+	}
+	let root_name = root_name.unwrap();
+
+	let root_attributes = document.root.attributes.as_ref();
+	if root_attributes.is_none() {
+		return Err("Root element has no attributes!".into());
 	}
 
-	if element.value.is_some() {
-		println!(
-			"{}{}",
-			" ".repeat(depth as usize),
-			element.value.as_ref().unwrap()
-		);
+	let root_children = document.root.children.as_ref();
+	if root_children.is_none() {
+		return Err("Root element has no children!".into());
 	}
 
-	if element.attributes.is_some() {
-		let attributes = element.attributes.as_ref().unwrap();
-
-		for (name, value) in attributes.map.iter() {
-			println!(" {}{}: {}", " ".repeat(depth as usize), name, value);
-		}
+	if root_name != "Pport" {
+		return Err("Root element is not 'Pport'!".into());
 	}
 
-	if element.children.is_some() {
-		let children = element.children.as_ref().unwrap();
+	let timestamp_iso8601 = root_attributes.as_ref().unwrap().get("ts").unwrap();
 
-		for child in children.iter() {
-			recursively_print_element_children(child, depth + 1)?;
-		}
+	std::fs::write(format!("data/{}.xml", timestamp_iso8601), body)?;
+
+	let pport_elements = root_children.as_ref().unwrap();
+	if pport_elements.len() != 1 {
+		return Err("Pport element has more than 1 child!".into());
 	}
+
+	let ur = pport_elements.first().unwrap();
+	let ur_name = ur.name.as_ref();
+	if ur_name.is_none() {
+		return Err("Pport -> uR element has no name!".into());
+	}
+	let ur_name = ur_name.unwrap();
+	if ur_name != "uR" {
+		return Err("Pport -> uR element is not 'uR'!".into());
+	}
+
+	let ur_children = ur.children.as_ref().unwrap();
 
 	Ok(())
 }

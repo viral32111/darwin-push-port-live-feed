@@ -7,9 +7,9 @@
 ![GitHub release downloads](https://img.shields.io/github/downloads/viral32111/darwin-push-port-live-feed/total?label=Downloads)
 ![GitHub commit activity](https://img.shields.io/github/commit-activity/m/viral32111/darwin-push-port-live-feed?label=Commits)
 
-This project is a [STOMP client](https://stomp.github.io/stomp-specification-1.2.html) for receiving real-time updates from the [National Rail Enquiries](https://www.nationalrail.co.uk/) [Darwin Push Port Live Feed](https://wiki.openraildata.com/index.php?title=Darwin:Push_Port#Darwin_Live_Feed_Topic) to maintain the state of the British railway network in a Redis database.
+This project is a [STOMP client](https://stomp.github.io/stomp-specification-1.2.html) that maintains a local copy of real-time updates from the [National Rail Enquiries](https://www.nationalrail.co.uk/) [Darwin Push Port Live Feed](https://wiki.openraildata.com/index.php?title=Darwin:Push_Port#Darwin_Live_Feed_Topic) in a database.
 
-This is designed to be minimal and lightweight so that it may be deployed as a microservice and scaled appropriately.
+This is designed to be minimal and lightweight so that it can be deployed as a microservice and scaled appropriately.
 
 Performance is a key consideration as the [Darwin Push Port Live Feed](https://wiki.openraildata.com/index.php?title=Darwin:Push_Port#Darwin_Live_Feed_Topic) dispatches messages at a high rate, and this client must be able to process them in real-time.
 
