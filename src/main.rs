@@ -1,7 +1,7 @@
 use env_file_reader::read_file;
 use std::{error::Error, path::Path, process::exit};
 use viral32111_stomp::{frame::Frame, header::Headers, open};
-use viral32111_xml::{element::Element, parse};
+use viral32111_xml::parse;
 
 /*
 service:2024:05:03:G79740:location:ABWDXR:departure:staff = 19:54:00
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 				handle_stomp_frame(frame)?;
 			}
 			Err(error) => {
-				eprintln!("Unable to receive STOMP frame! ({})", error);
+				eprintln!("Unable to receive STOMP frame! ({})\nAre the 'DARWIN_USERNAME' and 'DARWIN_PASSWORD' environment variables correct?", error);
 			}
 		}
 	}
@@ -147,7 +147,7 @@ fn handle_stomp_xml_body(body: String) -> Result<(), Box<dyn std::error::Error>>
 		return Err("Pport -> uR element is not 'uR'!".into());
 	}
 
-	let ur_children = ur.children.as_ref().unwrap();
+	// let ur_children = ur.children.as_ref().unwrap();
 
 	Ok(())
 }

@@ -16,7 +16,7 @@ rust-version = "1.77"
 
 [dependencies]
 env-file-reader = "0.3.0"
-#viral32111-stomp = { path = "../stomp", version = "0.1.3" }
+# viral32111-stomp = { path = "../stomp", version = "0.1.3" }
 viral32111-stomp = "0.1.3"
-#viral32111-xml = { path = "../xml", version = "0.1.0" }
+# viral32111-xml = { path = "../xml", version = "0.1.0" }
 viral32111-xml = "0.1.0"
