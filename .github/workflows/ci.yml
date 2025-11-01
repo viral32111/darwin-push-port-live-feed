@@ -72,7 +72,7 @@ jobs:
           echo "SHA-512 checksum of '${BINARY_PATH}' is '$(cat "${BINARY_PATH}.sha512")'"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.profile }}_${{ matrix.toolchain }}_${{ matrix.target }}
           path: target
