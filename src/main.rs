@@ -1,153 +1,320 @@
-use env_file_reader::read_file;
-use std::{error::Error, path::Path, process::exit};
-use viral32111_stomp::{frame::Frame, header::Headers, open};
-use viral32111_xml::parse;
+use anyhow::{Context, Result};
+use flate2::read::GzDecoder;
+use futures::StreamExt;
+use quick_xml::{Reader as XmlReader, Writer as XmlWriter, events::Event as XmlEvent};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-/*
-service:2024:05:03:G79740:location:ABWDXR:departure:staff = 19:54:00
-service:2024:05:03:G79740:location:ABWDXR:departure:public = 19:54:00
-service:2024:05:03:G79740:location:ABWDXR:departure:estimate = 19:54:00
-service:2024:05:03:G79740:location:ABWDXR:platform = 3
-service:2024:05:03:G79740:location:HTRWAPT:arrival:staff = 20:50:30
-service:2024:05:03:G79740:location:HTRWAPT:arrival:working = 20:51:00
-service:2024:05:03:G79740:location:HTRWAPT:arrival:estimate = 20:49:00
-service:2024:05:03:G79740:location:HTRWAPT:departure:staff = 20:52:00
-service:2024:05:03:G79740:location:HTRWAPT:departure:public = 20:52:00
-service:2024:05:03:G79740:location:HTRWAPT:departure:estimate = 20:52:00
-service:2024:05:03:G79740:location:HTRWAPT:platform = 1
-*/
+use crate::xml::{PushPort, PushPortEvent, PushPortUpdateKind};
 
-fn main() -> Result<(), Box<dyn Error>> {
-	if !Path::new(".env").exists() {
-		eprintln!("The '.env' file does not exist in the current directory!");
-		exit(1);
+mod env;
+mod helpers;
+mod stomp;
+mod xml;
+
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+const SEQUENCE_MAX: u32 = 9_999_999;
+const CONTENT_TYPE_HEADER: &str = "content_hyphen_type";
+const TIPLOC_FILTER: &[&str] = &[];
+
+fn is_relevant(event: &PushPortEvent) -> bool {
+	match event {
+		PushPortEvent::TrainStatus(status) => {
+			status.locations.iter().any(|loc| TIPLOC_FILTER.contains(&loc.tiploc.as_str()))
+		}
+
+		PushPortEvent::Schedule(schedule) => {
+			schedule.locations.iter().any(|loc| TIPLOC_FILTER.contains(&loc.tiploc.as_str()))
+		}
+
+		PushPortEvent::Association(association) => TIPLOC_FILTER.contains(&association.tiploc.as_str()),
+
+		PushPortEvent::TrainOrder(order) => TIPLOC_FILTER.contains(&order.tiploc.as_str()),
+
+		PushPortEvent::Deactivated {
+			..
+		} => false,
+
+		_ => true,
 	}
+}
 
-	let environment_variables = read_file(".env")?;
+#[tokio::main]
+async fn main() -> Result<()> {
+	let env = env::load(None, cfg!(debug_assertions)).expect("Failed to load environment variables");
 
-	let host = environment_variables
-		.get("DARWIN_HOST")
-		.expect("Environment variable 'DARWIN_HOST' not present in .env file");
-	let port = environment_variables
-		.get("DARWIN_PORT")
-		.expect("Environment variable 'DARWIN_PORT' not present in .env file")
-		.parse::<u16>()?;
-	let username = environment_variables
-		.get("DARWIN_USERNAME")
-		.expect("Environment variable 'DARWIN_USERNAME' not present in .env file");
-	let password = environment_variables
-		.get("DARWIN_PASSWORD")
-		.expect("Environment variable 'DARWIN_PASSWORD' not present in .env file");
+	let data_directory = Arc::new(PathBuf::from(&env.data_directory));
+	std::fs::create_dir_all(&*data_directory)
+		.context(format!("Unable to create data directory '{}'", env.data_directory))?;
 
-	let mut connection = open(host, port, None)?;
-	connection.authenticate(username, password)?;
-	connection.subscribe(0, "/topic/darwin.pushport-v16")?;
-	//connection.subscribe(1, "/topic/darwin.status")?;
+	let host_id = helpers::anonymous_host_id();
+	let unique_id = uuid::Uuid::new_v4();
 
-	for frame in connection.frame_receiver.iter() {
-		match frame {
-			Ok(frame) => {
-				handle_stomp_frame(frame)?;
+	/******************************************************/
+
+	let client_id = format!("{}-{}-{}", &env.dpplf_username, &host_id, &unique_id);
+
+	let mut client = stomp::Client::connect(
+		&format!("{}:{}", &env.dpplf_host, &env.dpplf_port),
+		&env.dpplf_host,
+		&env.dpplf_username,
+		&env.dpplf_password,
+		&client_id,
+	)
+	.await
+	.context(format!("Unable to connect to server '{}:{}'", &env.dpplf_host, &env.dpplf_port,))?;
+
+	println!("Connected to server '{}:{}' with client ID '{}'", &env.dpplf_host, &env.dpplf_port, &client_id);
+
+	/******************************************************/
+
+	let make_sub_headers =
+		|topic_name: &str| vec![("activemq.subscriptionName".to_string(), format!("{}-{}", &host_id, topic_name))];
+
+	let status_topic = "darwin.status";
+	let mut status_subscription = client
+		.subscribe(&format!("/topic/{}", status_topic), make_sub_headers(status_topic))
+		.await
+		.context(format!("Unable to subscribe to '{}' topic", status_topic))?;
+	println!("Subscribed to '{}' topic", status_topic);
+
+	let live_feed_topic = "darwin.pushport-v16";
+	let mut live_feed_subscription = client
+		.subscribe(&format!("/topic/{}", live_feed_topic), make_sub_headers(live_feed_topic))
+		.await
+		.context(format!("Unable to subscribe to '{}' topic", live_feed_topic))?;
+	println!("Subscribed to '{}' topic", live_feed_topic);
+
+	/******************************************************/
+
+	let (channel_transmit, mut channel_receive) = tokio::sync::mpsc::channel::<(Vec<u8>, Option<String>)>(1024);
+
+	tokio::spawn(async move {
+		while let Some((body, content_type)) = channel_receive.recv().await {
+			let data_directory = data_directory.clone();
+			match tokio::task::spawn_blocking(move || process_frame_body(body, content_type, &data_directory)).await {
+				Ok(Ok(())) => {}
+				Ok(Err(error)) => eprintln!("Failed to process STOMP frame: {error:#}"),
+				Err(error) => eprintln!("Processing task panicked: {error}"),
 			}
-			Err(error) => {
-				eprintln!("Unable to receive STOMP frame! ({})\nAre the 'DARWIN_USERNAME' and 'DARWIN_PASSWORD' environment variables correct?", error);
+		}
+	});
+
+	/******************************************************/
+
+	let mut last_sequence_number: Option<u32> = None;
+
+	loop {
+		tokio::select! {
+			result = status_subscription.next() => {
+				match result {
+					Some(frame) => {
+						if let Ok(text) = String::from_utf8(frame.body) {
+							match text.trim() {
+								"HBINT"         => eprintln!("Darwin: feed initialising timetable"),
+								"HBFAIL"        => eprintln!("Darwin: feed going down"),
+								"HBPENDING"     => eprintln!("Darwin: feed in failover mode"),
+								"SHUTTING-DOWN" => eprintln!("Darwin: shutting down"),
+								"SNAPSHOT"      => eprintln!("Darwin: snapshot in progress"),
+								other           => eprintln!("Darwin status: '{other}'"),
+							}
+						}
+					}
+
+					None => eprintln!("Status subscription stream ended"),
+				}
+			}
+
+			result = live_feed_subscription.next() => {
+				match result {
+					Some(frame) => {
+						/*
+						eprintln!("============ FRAME ============");
+						eprintln!("COMMAND: {}", frame.command);
+						for (name, value) in &frame.headers {
+							eprintln!("HEADER: {name}: {value}");
+						}
+						eprintln!("BODY: {} byte(s)", frame.body.len());
+						eprintln!("===============================");
+						*/
+
+						if let Some(sequence_header) = frame.get_header("SequenceNumber") {
+							if let Ok(sequence_number) = sequence_header.parse::<u32>() {
+								if let Some(previous_sequence_number) = last_sequence_number {
+									let expected_sequence_number = if previous_sequence_number == SEQUENCE_MAX { 0 } else { previous_sequence_number + 1 };
+
+									if sequence_number != expected_sequence_number {
+										eprintln!(
+											"Sequence gap! Expected {expected_sequence_number}, got {sequence_number} (last: {previous_sequence_number}, missed: {})",
+											sequence_number.saturating_sub(expected_sequence_number)
+										);
+									}
+								}
+
+								last_sequence_number = Some(sequence_number);
+							}
+						}
+
+						let content_type = frame.get_header(CONTENT_TYPE_HEADER).map(str::to_string);
+						if channel_transmit.send((frame.body, content_type)).await.is_err() {
+							eprintln!("Channel closed unexpectedly");
+							break;
+						}
+					}
+
+					None => {
+						eprintln!("Live feed subscription stream ended");
+						break;
+					}
+				}
 			}
 		}
 	}
-
-	connection.wait()?;
-	connection.close()?;
 
 	Ok(())
 }
 
-fn handle_stomp_frame(frame: Frame) -> Result<(), Box<dyn Error>> {
-	if frame.command == "CONNECTED" {
-		println!("Connected to STOMP server!");
-		return Ok(());
-	}
+fn pretty_xml(xml: &str) -> String {
+	let mut reader = XmlReader::from_str(xml);
+	reader.config_mut().trim_text(true);
 
-	if frame.command == "MESSAGE" && frame.body.is_some() {
-		let body = frame.body.unwrap();
+	let mut writer = XmlWriter::new_with_indent(Vec::new(), b'\t', 1);
+	let mut buf = Vec::new();
 
-		let content_type_option = frame.headers.iter().find_map(|(name, value)| {
-			if name.eq(Headers::ContentType.as_str()) {
-				return Some(value.to_string());
+	loop {
+		match reader.read_event_into(&mut buf) {
+			Ok(XmlEvent::Eof) => break,
+			Ok(event) => {
+				if writer.write_event(event).is_err() {
+					return xml.to_string();
+				}
 			}
-
-			None
-		});
-
-		if content_type_option.is_none() {
-			return Err("No content type specified in message!".into());
+			Err(_) => return xml.to_string(),
 		}
-
-		let content_type = content_type_option.unwrap();
-		if !content_type.eq("application/xml") {
-			return Err(format!("Unexpected content type '{}'", content_type).into());
-		}
-
-		handle_stomp_xml_body(body)?;
-
-		return Ok(());
+		buf.clear();
 	}
 
-	// Dump unknown STOMP frames
-	println!("{}", frame.command);
-	for (name, value) in frame.headers.clone() {
-		println!("{}: {}", name, value);
-	}
-	println!("");
-	if frame.body.is_some() {
-		println!("{}", frame.body.unwrap());
-	}
-
-	Ok(())
+	String::from_utf8(writer.into_inner()).unwrap_or_else(|_| xml.to_string())
 }
 
-fn handle_stomp_xml_body(body: String) -> Result<(), Box<dyn std::error::Error>> {
-	let document = parse(&body)?;
+fn process_frame_body(body: Vec<u8>, content_type: Option<String>, data_directory: &Path) -> Result<()> {
+	let is_gzip = body.starts_with(&GZIP_MAGIC)
+		|| content_type
+			.as_deref()
+			.is_some_and(|content_type| content_type.contains("gzip") || content_type.contains("octet-stream"));
 
-	let root_name = document.root.name.as_ref();
-	if root_name.is_none() {
-		return Err("Root element has no name!".into());
-	}
-	let root_name = root_name.unwrap();
+	let xml = if is_gzip {
+		let mut decoder = GzDecoder::new(body.as_slice());
+		let mut decompressed = String::new();
 
-	let root_attributes = document.root.attributes.as_ref();
-	if root_attributes.is_none() {
-		return Err("Root element has no attributes!".into());
-	}
+		decoder.read_to_string(&mut decompressed)?;
 
-	let root_children = document.root.children.as_ref();
-	if root_children.is_none() {
-		return Err("Root element has no children!".into());
-	}
+		decompressed
+	} else {
+		String::from_utf8(body)?
+	};
 
-	if root_name != "Pport" {
-		return Err("Root element is not 'Pport'!".into());
-	}
+	let push_port = xml::parse(&xml)?;
 
-	let timestamp_iso8601 = root_attributes.as_ref().unwrap().get("ts").unwrap();
-
-	std::fs::write(format!("data/{}.xml", timestamp_iso8601), body)?;
-
-	let pport_elements = root_children.as_ref().unwrap();
-	if pport_elements.len() != 1 {
-		return Err("Pport element has more than 1 child!".into());
+	if !push_port.update.events.iter().any(is_relevant) {
+		return Ok(());
 	}
 
-	let ur = pport_elements.first().unwrap();
-	let ur_name = ur.name.as_ref();
-	if ur_name.is_none() {
-		return Err("Pport -> uR element has no name!".into());
-	}
-	let ur_name = ur_name.unwrap();
-	if ur_name != "uR" {
-		return Err("Pport -> uR element is not 'uR'!".into());
-	}
+	let filename = format!("{}.xml", push_port.timestamp.replace(':', "-"));
+	std::fs::write(data_directory.join(filename), pretty_xml(&xml)).context("Writing XML to data directory")?;
 
-	// let ur_children = ur.children.as_ref().unwrap();
+	handle_push_port(push_port)
+}
+
+fn handle_push_port(push_port: PushPort) -> Result<()> {
+	let kind = match push_port.update.kind {
+		PushPortUpdateKind::Live => "live",
+		PushPortUpdateKind::Snapshot => "snapshot",
+	};
+
+	for event in push_port.update.events {
+		if !is_relevant(&event) {
+			continue;
+		}
+
+		match event {
+			PushPortEvent::TrainStatus(status) => {
+				println!(
+					"[{}][{}] TS rid={} uid={} locations={}",
+					push_port.timestamp,
+					kind,
+					status.darwin_timetable_id,
+					status.schedule_uid,
+					status.locations.len(),
+				);
+			}
+
+			PushPortEvent::Schedule(schedule) => {
+				println!(
+					"[{}][{}] Schedule rid={} uid={} toc={} locations={}",
+					push_port.timestamp,
+					kind,
+					schedule.darwin_id,
+					schedule.schedule_uid,
+					schedule.operator_code,
+					schedule.locations.len(),
+				);
+			}
+
+			PushPortEvent::Deactivated {
+				rid,
+			} => {
+				println!("[{}][{}] Deactivated rid={}", push_port.timestamp, kind, rid);
+			}
+
+			PushPortEvent::Association(association) => {
+				println!(
+					"[{}][{}] Association tiploc={} category={:?}",
+					push_port.timestamp, kind, association.tiploc, association.category,
+				);
+			}
+
+			PushPortEvent::StationMessage(message) => {
+				println!(
+					"[{}][{}] StationMessage id={} severity={} stations={:?}",
+					push_port.timestamp, kind, message.id, message.severity, message.stations,
+				);
+			}
+
+			PushPortEvent::TrainAlert(alert) => {
+				println!(
+					"[{}][{}] TrainAlert id={} audience={:?}",
+					push_port.timestamp, kind, alert.id, alert.audience,
+				);
+			}
+
+			PushPortEvent::TrainOrder(order) => {
+				println!(
+					"[{}][{}] TrainOrder tiploc={} crs={} platform={}",
+					push_port.timestamp, kind, order.tiploc, order.crs, order.platform,
+				);
+			}
+
+			PushPortEvent::TrackingId(tracking) => {
+				println!(
+					"[{}][{}] {} at TD berth {}:{}",
+					push_port.timestamp, kind, tracking.correction, tracking.area, tracking.berth,
+				);
+			}
+
+			PushPortEvent::Alarm(alarm) => {
+				println!("[{}][{}] Alarm action={:?}", push_port.timestamp, kind, alarm.action,);
+			}
+
+			PushPortEvent::TimetableId(timetable) => {
+				println!(
+					"[{}][{}] TimetableId id={} file={}",
+					push_port.timestamp, kind, timetable.id, timetable.timetable_file,
+				);
+			}
+		}
+	}
 
 	Ok(())
 }

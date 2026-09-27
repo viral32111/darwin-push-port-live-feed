@@ -2,9 +2,11 @@
 	// Title
 	"window.title": "Darwin Push Port Live Feed",
 
-	// Tidy up code on save
-	"editor.formatOnSave": true,
-	"editor.defaultFormatter": "rust-lang.rust-analyzer",
+	// Tidy code on save
+	"[rust]": {
+		"editor.formatOnSave": true,
+		"editor.defaultFormatter": "rust-lang.rust-analyzer",
+	},
 	"rust-analyzer.linkedProjects": [
 		"Cargo.toml"
 	],
@@ -15,7 +17,7 @@
 	"editor.indentSize": "tabSize",
 	"editor.tabSize": 4,
 
-	// Linux compatible line endings
+	// Linux line endings
 	"files.eol": "\n",
 
 	// Force file type association
@@ -49,7 +51,11 @@
 	],
 	"cSpell.words": [
 		"Addrs",
+		"dpplf",
+		"gethostname",
+		"headcode",
 		"Pport",
-		"pushport"
+		"pushport",
+		"TIPLOC"
 	]
 }

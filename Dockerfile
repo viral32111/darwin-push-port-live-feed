@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Start from Alpine Linux
-FROM alpine:3.19
+FROM alpine:3
 
 # Create an unprivileged user
 ENV USER_ID=1000 USER_NAME=user USER_HOME=/home/user
@@ -12,10 +12,7 @@ RUN mkdir -v -p ${USER_HOME} && \
 
 # Add the build from context
 ARG TARGETARCH
-COPY --chown=0:0 --chmod=755 $TARGETARCH/darwin-push-port-live-feed /usr/local/bin/darwin-push-port-live-feed
-
-# Configure reasonable defaults
-ENV DARWIN_PORT=61613
+COPY --chown=0:0 --chmod=755 $TARGETARCH/darwin-push-port-live-feed /usr/local/bin/dpplf
 
 # Launch the build
-ENTRYPOINT [ "/usr/local/bin/darwin-push-port-live-feed" ]
+ENTRYPOINT [ "/usr/local/bin/dpplf" ]
