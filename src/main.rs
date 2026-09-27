@@ -16,29 +16,6 @@ mod xml;
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const SEQUENCE_MAX: u32 = 9_999_999;
 const CONTENT_TYPE_HEADER: &str = "content_hyphen_type";
-const TIPLOC_FILTER: &[&str] = &[];
-
-fn is_relevant(event: &PushPortEvent) -> bool {
-	match event {
-		PushPortEvent::TrainStatus(status) => {
-			status.locations.iter().any(|loc| TIPLOC_FILTER.contains(&loc.tiploc.as_str()))
-		}
-
-		PushPortEvent::Schedule(schedule) => {
-			schedule.locations.iter().any(|loc| TIPLOC_FILTER.contains(&loc.tiploc.as_str()))
-		}
-
-		PushPortEvent::Association(association) => TIPLOC_FILTER.contains(&association.tiploc.as_str()),
-
-		PushPortEvent::TrainOrder(order) => TIPLOC_FILTER.contains(&order.tiploc.as_str()),
-
-		PushPortEvent::Deactivated {
-			..
-		} => false,
-
-		_ => true,
-	}
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -180,10 +157,10 @@ fn pretty_xml(xml: &str) -> String {
 	reader.config_mut().trim_text(true);
 
 	let mut writer = XmlWriter::new_with_indent(Vec::new(), b'\t', 1);
-	let mut buf = Vec::new();
+	let mut buffer = Vec::new();
 
 	loop {
-		match reader.read_event_into(&mut buf) {
+		match reader.read_event_into(&mut buffer) {
 			Ok(XmlEvent::Eof) => break,
 			Ok(event) => {
 				if writer.write_event(event).is_err() {
@@ -192,7 +169,8 @@ fn pretty_xml(xml: &str) -> String {
 			}
 			Err(_) => return xml.to_string(),
 		}
-		buf.clear();
+
+		buffer.clear();
 	}
 
 	String::from_utf8(writer.into_inner()).unwrap_or_else(|_| xml.to_string())
@@ -217,10 +195,6 @@ fn process_frame_body(body: Vec<u8>, content_type: Option<String>, data_director
 
 	let push_port = xml::parse(&xml)?;
 
-	if !push_port.update.events.iter().any(is_relevant) {
-		return Ok(());
-	}
-
 	let filename = format!("{}.xml", push_port.timestamp.replace(':', "-"));
 	std::fs::write(data_directory.join(filename), pretty_xml(&xml)).context("Writing XML to data directory")?;
 
@@ -229,19 +203,15 @@ fn process_frame_body(body: Vec<u8>, content_type: Option<String>, data_director
 
 fn handle_push_port(push_port: PushPort) -> Result<()> {
 	let kind = match push_port.update.kind {
-		PushPortUpdateKind::Live => "live",
-		PushPortUpdateKind::Snapshot => "snapshot",
+		PushPortUpdateKind::Live => "LIVE",
+		PushPortUpdateKind::Snapshot => "SNAPSHOT",
 	};
 
 	for event in push_port.update.events {
-		if !is_relevant(&event) {
-			continue;
-		}
-
 		match event {
 			PushPortEvent::TrainStatus(status) => {
 				println!(
-					"[{}][{}] TS rid={} uid={} locations={}",
+					"[{}]\t{}\tTRAIN STATUS\trid={} uid={} locations={}",
 					push_port.timestamp,
 					kind,
 					status.darwin_timetable_id,
@@ -252,7 +222,7 @@ fn handle_push_port(push_port: PushPort) -> Result<()> {
 
 			PushPortEvent::Schedule(schedule) => {
 				println!(
-					"[{}][{}] Schedule rid={} uid={} toc={} locations={}",
+					"[{}]\t{}\tSCHEDULE\trid={} uid={} toc={} locations={}",
 					push_port.timestamp,
 					kind,
 					schedule.darwin_id,
@@ -265,51 +235,51 @@ fn handle_push_port(push_port: PushPort) -> Result<()> {
 			PushPortEvent::Deactivated {
 				rid,
 			} => {
-				println!("[{}][{}] Deactivated rid={}", push_port.timestamp, kind, rid);
+				println!("[{}]\t{}\tDEACTIVATED\trid={}", push_port.timestamp, kind, rid);
 			}
 
 			PushPortEvent::Association(association) => {
 				println!(
-					"[{}][{}] Association tiploc={} category={:?}",
+					"[{}]\t{}\tASSOCIATION\ttiploc={} category={:?}",
 					push_port.timestamp, kind, association.tiploc, association.category,
 				);
 			}
 
 			PushPortEvent::StationMessage(message) => {
 				println!(
-					"[{}][{}] StationMessage id={} severity={} stations={:?}",
+					"[{}]\t{}\tSTATION MESSAGE\tid={} severity={} stations={:?}",
 					push_port.timestamp, kind, message.id, message.severity, message.stations,
 				);
 			}
 
 			PushPortEvent::TrainAlert(alert) => {
 				println!(
-					"[{}][{}] TrainAlert id={} audience={:?}",
+					"[{}]\t{}\tTRAIN ALERT\tid={} audience={:?}",
 					push_port.timestamp, kind, alert.id, alert.audience,
 				);
 			}
 
 			PushPortEvent::TrainOrder(order) => {
 				println!(
-					"[{}][{}] TrainOrder tiploc={} crs={} platform={}",
+					"[{}]\t{}\tTRAIN ORDER\ttiploc={} crs={} platform={}",
 					push_port.timestamp, kind, order.tiploc, order.crs, order.platform,
 				);
 			}
 
 			PushPortEvent::TrackingId(tracking) => {
 				println!(
-					"[{}][{}] {} at TD berth {}:{}",
+					"[{}]\t{}\tTRACKING ID\tcorrection={} area={} berth={}",
 					push_port.timestamp, kind, tracking.correction, tracking.area, tracking.berth,
 				);
 			}
 
 			PushPortEvent::Alarm(alarm) => {
-				println!("[{}][{}] Alarm action={:?}", push_port.timestamp, kind, alarm.action,);
+				println!("[{}]\t{}\tALARM\taction={:?}", push_port.timestamp, kind, alarm.action,);
 			}
 
 			PushPortEvent::TimetableId(timetable) => {
 				println!(
-					"[{}][{}] TimetableId id={} file={}",
+					"[{}]\t{}\tTIMETABLE ID\tid={} file={}",
 					push_port.timestamp, kind, timetable.id, timetable.timetable_file,
 				);
 			}

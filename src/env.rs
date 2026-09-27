@@ -10,6 +10,7 @@ pub struct Env {
 	pub dpplf_username: String,
 	pub dpplf_password: String,
 
+	#[serde(default = "defaults::redis_url")]
 	pub redis_url: String,
 
 	#[serde(default = "defaults::redis_prefix")]
@@ -25,6 +26,10 @@ pub struct Env {
 mod defaults {
 	pub fn dpplf_port() -> u16 {
 		61613
+	}
+
+	pub fn redis_url() -> String {
+		"redis://127.0.0.1:6379/0".into()
 	}
 
 	pub fn redis_prefix() -> String {
