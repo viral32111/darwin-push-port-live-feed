@@ -6,13 +6,18 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::metrics::Metrics;
 use crate::xml::{PushPort, PushPortEvent, PushPortUpdateKind};
 
+mod api;
 mod env;
 mod helpers;
+mod metrics;
 mod redis;
 mod stomp;
 mod xml;
+
+const STOMP_SUBSCRIPTION_COUNT: u64 = 2; // darwin.status + darwin.pushport-v16
 
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 const SEQUENCE_MAX: u32 = 9_999_999;
@@ -26,11 +31,26 @@ async fn main() -> Result<()> {
 	std::fs::create_dir_all(&*data_directory)
 		.context(format!("Unable to create data directory '{}'", env.dpplf_data_directory))?;
 
+	let metrics = Arc::new(Metrics::new());
+
 	let redis = Arc::new(
-		redis::Redis::connect(&env.redis_url, &env.redis_prefix, env.redis_ttl)
+		redis::Redis::connect(&env.redis_url, &env.redis_prefix, env.redis_ttl, metrics.clone())
 			.context("Unable to connect to Redis")?,
 	);
 	println!("Connected to Redis server '{}'", &env.redis_url);
+
+	let http_addr = format!("{}:{}", &env.dpplf_http_listen_address, env.dpplf_http_listen_port).parse().context(
+		format!("Invalid HTTP_HOST/HTTP_PORT '{}:{}'", &env.dpplf_http_listen_address, env.dpplf_http_listen_port),
+	)?;
+	let api_state = api::AppState {
+		redis: redis.clone(),
+		metrics: metrics.clone(),
+	};
+	tokio::spawn(async move {
+		if let Err(error) = api::serve(api_state, http_addr).await {
+			eprintln!("HTTP API server failed: {error:#}");
+		}
+	});
 
 	let host_id = helpers::anonymous_host_id();
 	let unique_id = uuid::Uuid::new_v4();
@@ -70,16 +90,21 @@ async fn main() -> Result<()> {
 		.context(format!("Unable to subscribe to '{}' topic", live_feed_topic))?;
 	println!("Subscribed to '{}' topic", live_feed_topic);
 
+	metrics.set_stomp_connected(true, STOMP_SUBSCRIPTION_COUNT);
+
 	/******************************************************/
 
 	let (channel_transmit, mut channel_receive) = tokio::sync::mpsc::channel::<(Vec<u8>, Option<String>)>(1024);
+
+	let stomp_metrics = metrics.clone();
 
 	tokio::spawn(async move {
 		while let Some((body, content_type)) = channel_receive.recv().await {
 			let data_directory = data_directory.clone();
 			let database = redis.clone();
+			let metrics = metrics.clone();
 			match tokio::task::spawn_blocking(move || {
-				process_frame_body(body, content_type, &data_directory, &database)
+				process_frame_body(body, content_type, &data_directory, &database, &metrics)
 			})
 			.await
 			{
@@ -111,13 +136,18 @@ async fn main() -> Result<()> {
 						}
 					}
 
-					None => eprintln!("Status subscription stream ended"),
+					None => {
+						stomp_metrics.set_stomp_connected(false, 0);
+						eprintln!("Status subscription stream ended");
+					}
 				}
 			}
 
 			result = live_feed_subscription.next() => {
 				match result {
 					Some(frame) => {
+						stomp_metrics.record_stomp_message();
+
 						/*
 						eprintln!("============ FRAME ============");
 						eprintln!("COMMAND: {}", frame.command);
@@ -153,6 +183,7 @@ async fn main() -> Result<()> {
 					}
 
 					None => {
+						stomp_metrics.set_stomp_connected(false, 0);
 						eprintln!("Live feed subscription stream ended");
 						break;
 					}
@@ -193,6 +224,7 @@ fn process_frame_body(
 	content_type: Option<String>,
 	data_directory: &Path,
 	database: &redis::Redis,
+	metrics: &Metrics,
 ) -> Result<()> {
 	let is_gzip = body.starts_with(&GZIP_MAGIC)
 		|| content_type
@@ -217,16 +249,18 @@ fn process_frame_body(
 
 	database.store(&push_port).context("Storing update in Redis")?;
 
-	handle_push_port(push_port)
+	handle_push_port(push_port, metrics)
 }
 
-fn handle_push_port(push_port: PushPort) -> Result<()> {
+fn handle_push_port(push_port: PushPort, metrics: &Metrics) -> Result<()> {
 	let kind = match push_port.update.kind {
 		PushPortUpdateKind::Live => "LIVE",
 		PushPortUpdateKind::Snapshot => "SNAPSHOT",
 	};
 
 	for event in push_port.update.events {
+		metrics.record_event(&event);
+
 		match event {
 			PushPortEvent::TrainStatus(status) => {
 				println!(

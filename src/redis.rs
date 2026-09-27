@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
-use redis::{Connection, Pipeline};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use redis::{Commands, Connection, Pipeline, SortedSetAddOptions};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::metrics::Metrics;
 use crate::xml::{
 	PushPort, PushPortAssociation, PushPortEvent, PushPortForecastPlatformData, PushPortForecastTimeData,
 	PushPortFormationLoading, PushPortSchedule, PushPortScheduleFormations, PushPortStationMessage,
@@ -12,6 +14,7 @@ use crate::xml::{
 pub struct Redis {
 	client: redis::Client,
 	connection: Mutex<Connection>,
+	metrics: Arc<Metrics>,
 
 	key_prefix: String,
 	stale_after_seconds: i64,
@@ -20,16 +23,48 @@ pub struct Redis {
 type Fields = Vec<(String, String)>;
 
 impl Redis {
-	pub fn connect(url: &str, key_prefix: &str, stale_after_seconds: u64) -> Result<Self> {
+	pub fn connect(url: &str, key_prefix: &str, stale_after_seconds: u64, metrics: Arc<Metrics>) -> Result<Self> {
 		let client = redis::Client::open(url).context("Invalid Redis URL")?;
 		let connection = client.get_connection().context("Unable to connect to Redis")?;
 
 		Ok(Self {
 			client,
 			connection: Mutex::new(connection),
+			metrics,
 			key_prefix: key_prefix.to_string(),
 			stale_after_seconds: stale_after_seconds as i64,
 		})
+	}
+
+	pub fn ping(&self) -> Option<f64> {
+		let start = Instant::now();
+
+		match self.with_connection(|connection| redis::cmd("PING").query::<String>(connection)) {
+			Ok(_) => Some(start.elapsed().as_secs_f64() * 1000.0),
+			Err(_) => None,
+		}
+	}
+
+	pub fn key_count(&self) -> Option<u64> {
+		self.with_connection(|connection| redis::cmd("DBSIZE").query::<u64>(connection)).ok()
+	}
+
+	pub fn hash(&self, key: &str) -> Result<HashMap<String, String>> {
+		self.with_connection(|connection| connection.hgetall(key))
+	}
+
+	pub fn smembers(&self, key: &str) -> Result<Vec<String>> {
+		self.with_connection(|connection| connection.smembers(key))
+	}
+
+	// Ascending order - matches ZADD score order (schedule sequence index, or first-seen time).
+	pub fn zrange_all(&self, key: &str) -> Result<Vec<String>> {
+		self.with_connection(|connection| connection.zrange(key, 0, -1))
+	}
+
+	// Descending order (most recently touched first) - unbounded, this is an internal API.
+	pub fn zrevrange_all(&self, key: &str) -> Result<Vec<String>> {
+		self.with_connection(|connection| connection.zrevrange(key, 0, -1))
 	}
 
 	pub fn store(&self, push_port: &PushPort) -> Result<()> {
@@ -65,6 +100,7 @@ impl Redis {
 		let now = now_epoch();
 		let ttl = self.stale_after_seconds;
 		let journey_key = self.key(&["journey", &status.darwin_timetable_id]);
+		let location_order_key = self.key(&["journey", &status.darwin_timetable_id, "location_order"]);
 
 		self.run(|pipeline| {
 			let mut fields: Fields = Vec::new();
@@ -80,7 +116,7 @@ impl Redis {
 			pipeline.hset_multiple(&journey_key, &fields).ignore();
 			pipeline.expire(&journey_key, ttl).ignore();
 
-			self.touch_indices(pipeline, &status.darwin_timetable_id, now, ttl, Some(&status.schedule_uid), None);
+			self.touch_indices(pipeline, &status.darwin_timetable_id, now, ttl, Some(&status.schedule_uid), None, None);
 
 			for location in &status.locations {
 				let location_id = location_id(
@@ -90,6 +126,10 @@ impl Redis {
 					location.pass_time.as_deref(),
 				);
 				let location_key = self.key(&["journey", &status.darwin_timetable_id, "location", &location_id]);
+
+				pipeline
+					.zadd_options(&location_order_key, &location_id, now, &SortedSetAddOptions::add_only())
+					.ignore();
 
 				let mut location_fields: Fields = Vec::new();
 				field_opt(&mut location_fields, "public_arrival_time", &location.public_arrival_time);
@@ -121,6 +161,8 @@ impl Redis {
 
 				self.touch_tiploc_index(pipeline, &location.tiploc, &status.darwin_timetable_id, now, ttl);
 			}
+
+			pipeline.expire(&location_order_key, ttl).ignore();
 		})
 	}
 
@@ -158,6 +200,7 @@ impl Redis {
 				ttl,
 				Some(&schedule.schedule_uid),
 				Some(&schedule.operator_code),
+				Some(&schedule.headcode),
 			);
 
 			for (sequence_index, location) in schedule.locations.iter().enumerate() {
@@ -252,7 +295,7 @@ impl Redis {
 				pipeline.sadd(&associations_key, &association_ref).ignore();
 				pipeline.expire(&associations_key, ttl).ignore();
 
-				self.touch_indices(pipeline, rid, now, ttl, None, None);
+				self.touch_indices(pipeline, rid, now, ttl, None, None, None);
 			}
 		})
 	}
@@ -268,7 +311,7 @@ impl Redis {
 			field(&mut fields, "category", format!("{:?}", message.category));
 			field_num(&mut fields, "severity", message.severity);
 			field_bool(&mut fields, "is_suppressed", message.suppress);
-			field(&mut fields, "message_html", message.message.clone());
+			field(&mut fields, "message_text", message.message.clone());
 
 			pipeline.hset_multiple(&message_key, &fields).ignore();
 			pipeline.expire(&message_key, ttl).ignore();
@@ -313,6 +356,7 @@ impl Redis {
 			loading.pass_time.as_deref(),
 		);
 		let loading_key = self.key(&["journey", &loading.darwin_id, "loading", &location_id]);
+		let loading_locations_key = self.key(&["journey", &loading.darwin_id, "loading_locations"]);
 
 		self.run(|pipeline| {
 			let mut fields: Fields = Vec::new();
@@ -330,13 +374,18 @@ impl Redis {
 			pipeline.hset_multiple(&loading_key, &fields).ignore();
 			pipeline.expire(&loading_key, ttl).ignore();
 
-			self.touch_indices(pipeline, &loading.darwin_id, now, ttl, None, None);
+			// Index so all of a journey's loading snapshots can be listed without a key scan.
+			pipeline.sadd(&loading_locations_key, &location_id).ignore();
+			pipeline.expire(&loading_locations_key, ttl).ignore();
+
+			self.touch_indices(pipeline, &loading.darwin_id, now, ttl, None, None, None);
 		})
 	}
 
 	fn store_schedule_formations(&self, formations: &PushPortScheduleFormations) -> Result<()> {
 		let now = now_epoch();
 		let ttl = self.stale_after_seconds;
+		let formations_key = self.key(&["journey", &formations.darwin_id, "formations"]);
 
 		self.run(|pipeline| {
 			for formation in &formations.formations {
@@ -356,10 +405,14 @@ impl Redis {
 				if !fields.is_empty() {
 					pipeline.hset_multiple(&formation_key, &fields).ignore();
 					pipeline.expire(&formation_key, ttl).ignore();
+
+					// Index so all of a journey's formations can be listed without a key scan.
+					pipeline.sadd(&formations_key, &formation.formation_id).ignore();
+					pipeline.expire(&formations_key, ttl).ignore();
 				}
 			}
 
-			self.touch_indices(pipeline, &formations.darwin_id, now, ttl, None, None);
+			self.touch_indices(pipeline, &formations.darwin_id, now, ttl, None, None, None);
 		})
 	}
 
@@ -392,6 +445,7 @@ impl Redis {
 		ttl: i64,
 		schedule_uid: Option<&str>,
 		operator_code: Option<&str>,
+		headcode: Option<&str>,
 	) {
 		let active_journeys_index = self.key(&["index", "active_journeys"]);
 		pipeline.zadd(&active_journeys_index, rid, now).ignore();
@@ -408,6 +462,12 @@ impl Redis {
 			pipeline.sadd(&operator_index, rid).ignore();
 			pipeline.expire(&operator_index, ttl).ignore();
 		}
+
+		if let Some(headcode) = headcode.filter(|value| !value.is_empty()) {
+			let headcode_index = self.key(&["index", "journeys_by_headcode", headcode]);
+			pipeline.sadd(&headcode_index, rid).ignore();
+			pipeline.expire(&headcode_index, ttl).ignore();
+		}
 	}
 
 	fn touch_tiploc_index(&self, pipeline: &mut Pipeline, tiploc: &str, rid: &str, now: i64, ttl: i64) {
@@ -416,7 +476,7 @@ impl Redis {
 		pipeline.expire(&tiploc_index, ttl).ignore();
 	}
 
-	fn key(&self, parts: &[&str]) -> String {
+	pub(crate) fn key(&self, parts: &[&str]) -> String {
 		let mut key = self.key_prefix.clone();
 
 		for part in parts {
@@ -431,7 +491,10 @@ impl Redis {
 		let mut pipeline = redis::pipe();
 		build(&mut pipeline);
 
-		self.with_connection(|connection| pipeline.query::<()>(connection))
+		self.with_connection(|connection| pipeline.query::<()>(connection))?;
+		self.metrics.record_redis_write();
+
+		Ok(())
 	}
 
 	fn with_connection<T>(&self, run: impl Fn(&mut Connection) -> redis::RedisResult<T>) -> Result<T> {

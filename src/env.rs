@@ -24,6 +24,12 @@ pub struct Env {
 
 	#[serde(default = "defaults::dpplf_data_directory")]
 	pub dpplf_data_directory: String,
+
+	#[serde(default = "defaults::dpplf_http_listen_address")]
+	pub dpplf_http_listen_address: String,
+
+	#[serde(default = "defaults::dpplf_http_listen_port")]
+	pub dpplf_http_listen_port: u16,
 }
 
 mod defaults {
@@ -49,6 +55,14 @@ mod defaults {
 
 	pub fn dpplf_data_directory() -> String {
 		"/var/tmp/dpplf".into()
+	}
+
+	pub fn dpplf_http_listen_address() -> String {
+		"127.0.0.1".into()
+	}
+
+	pub fn dpplf_http_listen_port() -> u16 {
+		3000
 	}
 }
 
@@ -93,6 +107,8 @@ fn print_table(config: &Env) {
 		("REDIS_TIMEOUT", config.redis_timeout.to_string()),
 		("REDIS_STALE_AFTER_SECONDS", config.redis_ttl.to_string()),
 		("DPPLF_DATA_DIRECTORY", config.dpplf_data_directory.clone()),
+		("DPPLF_HTTP_LISTEN_ADDRESS", config.dpplf_http_listen_address.clone()),
+		("DPPLF_HTTP_LISTEN_PORT", config.dpplf_http_listen_port.to_string()),
 	];
 
 	for (key, value) in rows {

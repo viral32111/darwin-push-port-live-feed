@@ -265,7 +265,7 @@ pub struct PushPortStationMessage {
 
 	pub stations: Vec<String>, // CRS codes
 
-	pub message: String, // HTML
+	pub message: String, // Plain text - inner markup (e.g. <a> links) is stripped, not preserved
 }
 
 #[derive(Debug, PartialEq)]
@@ -1666,7 +1666,9 @@ fn collect_inner_text(reader: &mut Reader<&[u8]>, end_tag: &[u8]) -> Result<Stri
 
 	loop {
 		match reader.read_event_into(&mut buffer)? {
-			Event::Text(ref text) if depth == 0 => {
+			// Msg bodies wrap their text in <p>/<a> etc - capture text at any depth, not just
+			// directly inside the end tag, or nested content (most of it) is silently dropped.
+			Event::Text(ref text) => {
 				output.push_str(&text.decode()?);
 			}
 
