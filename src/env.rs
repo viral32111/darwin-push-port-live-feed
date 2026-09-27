@@ -19,8 +19,11 @@ pub struct Env {
 	#[serde(default = "defaults::redis_timeout")]
 	pub redis_timeout: u64,
 
-	#[serde(default = "defaults::data_dir")]
-	pub data_directory: String,
+	#[serde(default = "defaults::redis_ttl")]
+	pub redis_ttl: u64,
+
+	#[serde(default = "defaults::dpplf_data_directory")]
+	pub dpplf_data_directory: String,
 }
 
 mod defaults {
@@ -40,8 +43,12 @@ mod defaults {
 		5
 	}
 
-	pub fn data_dir() -> String {
-		"data".into()
+	pub fn redis_ttl() -> u64 {
+		604800 // 7 days
+	}
+
+	pub fn dpplf_data_directory() -> String {
+		"/var/tmp/dpplf".into()
 	}
 }
 
@@ -84,7 +91,8 @@ fn print_table(config: &Env) {
 		("REDIS_URL", config.redis_url.clone()),
 		("REDIS_PREFIX", config.redis_prefix.clone()),
 		("REDIS_TIMEOUT", config.redis_timeout.to_string()),
-		("DATA_DIRECTORY", config.data_directory.clone()),
+		("REDIS_STALE_AFTER_SECONDS", config.redis_ttl.to_string()),
+		("DPPLF_DATA_DIRECTORY", config.dpplf_data_directory.clone()),
 	];
 
 	for (key, value) in rows {

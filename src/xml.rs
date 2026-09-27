@@ -440,6 +440,10 @@ pub struct PushPortFormationLoading {
 	pub formation_id: String,
 	pub tiploc: String,
 
+	pub working_arrival_time: Option<String>,
+	pub working_departure_time: Option<String>,
+	pub pass_time: Option<String>,
+
 	pub coaches: Vec<PushPortCoachLoading>,
 }
 
@@ -447,7 +451,7 @@ pub struct PushPortFormationLoading {
 pub struct PushPortCoachLoading {
 	pub coach_number: String,
 
-	pub source: Option<String>,      // Darwin, TD, CIS, Trust, etc.
+	pub source: Option<String>,        // Darwin, TD, CIS, Trust, etc.
 	pub source_system: Option<String>, // See reference data for CIS codes
 
 	pub percentage: Option<u8>, // 0-100
@@ -1456,6 +1460,9 @@ fn parse_formation_loading(
 	let rid = str_attr(open, b"rid")?.ok_or_else(|| anyhow!("<formationLoading> missing 'rid'"))?;
 	let fid = str_attr(open, b"fid")?.unwrap_or_default();
 	let tiploc = str_attr(open, b"tpl")?.unwrap_or_default();
+	let wta = str_attr(open, b"wta")?;
+	let wtd = str_attr(open, b"wtd")?;
+	let wtp = str_attr(open, b"wtp")?;
 
 	let mut coaches: Vec<PushPortCoachLoading> = Vec::new();
 	let mut buffer = Vec::new();
@@ -1501,6 +1508,9 @@ fn parse_formation_loading(
 		darwin_id: rid,
 		formation_id: fid,
 		tiploc,
+		working_arrival_time: wta,
+		working_departure_time: wtd,
+		pass_time: wtp,
 		coaches,
 	})
 }

@@ -10,6 +10,7 @@ use crate::xml::{PushPort, PushPortEvent, PushPortUpdateKind};
 
 mod env;
 mod helpers;
+mod redis;
 mod stomp;
 mod xml;
 
@@ -21,9 +22,15 @@ const CONTENT_TYPE_HEADER: &str = "content_hyphen_type";
 async fn main() -> Result<()> {
 	let env = env::load(None, cfg!(debug_assertions)).expect("Failed to load environment variables");
 
-	let data_directory = Arc::new(PathBuf::from(&env.data_directory));
+	let data_directory = Arc::new(PathBuf::from(&env.dpplf_data_directory));
 	std::fs::create_dir_all(&*data_directory)
-		.context(format!("Unable to create data directory '{}'", env.data_directory))?;
+		.context(format!("Unable to create data directory '{}'", env.dpplf_data_directory))?;
+
+	let redis = Arc::new(
+		redis::Redis::connect(&env.redis_url, &env.redis_prefix, env.redis_ttl)
+			.context("Unable to connect to Redis")?,
+	);
+	println!("Connected to Redis server '{}'", &env.redis_url);
 
 	let host_id = helpers::anonymous_host_id();
 	let unique_id = uuid::Uuid::new_v4();
@@ -70,7 +77,12 @@ async fn main() -> Result<()> {
 	tokio::spawn(async move {
 		while let Some((body, content_type)) = channel_receive.recv().await {
 			let data_directory = data_directory.clone();
-			match tokio::task::spawn_blocking(move || process_frame_body(body, content_type, &data_directory)).await {
+			let database = redis.clone();
+			match tokio::task::spawn_blocking(move || {
+				process_frame_body(body, content_type, &data_directory, &database)
+			})
+			.await
+			{
 				Ok(Ok(())) => {}
 				Ok(Err(error)) => eprintln!("Failed to process STOMP frame: {error:#}"),
 				Err(error) => eprintln!("Processing task panicked: {error}"),
@@ -176,7 +188,12 @@ fn pretty_xml(xml: &str) -> String {
 	String::from_utf8(writer.into_inner()).unwrap_or_else(|_| xml.to_string())
 }
 
-fn process_frame_body(body: Vec<u8>, content_type: Option<String>, data_directory: &Path) -> Result<()> {
+fn process_frame_body(
+	body: Vec<u8>,
+	content_type: Option<String>,
+	data_directory: &Path,
+	database: &redis::Redis,
+) -> Result<()> {
 	let is_gzip = body.starts_with(&GZIP_MAGIC)
 		|| content_type
 			.as_deref()
@@ -197,6 +214,8 @@ fn process_frame_body(body: Vec<u8>, content_type: Option<String>, data_director
 
 	let filename = format!("{}.xml", push_port.timestamp.replace(':', "-"));
 	std::fs::write(data_directory.join(filename), pretty_xml(&xml)).context("Writing XML to data directory")?;
+
+	database.store(&push_port).context("Storing update in Redis")?;
 
 	handle_push_port(push_port)
 }
@@ -287,14 +306,22 @@ fn handle_push_port(push_port: PushPort) -> Result<()> {
 			PushPortEvent::FormationLoading(loading) => {
 				println!(
 					"[{}]\t{}\tFORMATION LOADING\trid={} fid={} tiploc={} coaches={}",
-					push_port.timestamp, kind, loading.darwin_id, loading.formation_id, loading.tiploc, loading.coaches.len(),
+					push_port.timestamp,
+					kind,
+					loading.darwin_id,
+					loading.formation_id,
+					loading.tiploc,
+					loading.coaches.len(),
 				);
 			}
 
 			PushPortEvent::ScheduleFormations(formations) => {
 				println!(
 					"[{}]\t{}\tSCHEDULE FORMATIONS\trid={} formations={}",
-					push_port.timestamp, kind, formations.darwin_id, formations.formations.len(),
+					push_port.timestamp,
+					kind,
+					formations.darwin_id,
+					formations.formations.len(),
 				);
 			}
 		}

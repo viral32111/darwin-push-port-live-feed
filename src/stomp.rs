@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::Stream;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -7,7 +7,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::timeout;
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -34,10 +34,7 @@ impl Frame {
 	}
 
 	pub fn get_header(&self, name: &str) -> Option<&str> {
-		self.headers
-			.iter()
-			.find(|(key, _)| key.eq_ignore_ascii_case(name))
-			.map(|(_, value)| value.as_str())
+		self.headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, value)| value.as_str())
 	}
 
 	fn serialize(&self) -> Vec<u8> {
@@ -85,9 +82,7 @@ impl Stream for Subscription {
 	}
 }
 
-async fn read_frame(
-	reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
-) -> Result<Option<Frame>> {
+async fn read_frame(reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>) -> Result<Option<Frame>> {
 	let command = loop {
 		let mut line = String::new();
 
@@ -127,25 +122,16 @@ async fn read_frame(
 	let body = if let Some(length) = content_length {
 		let mut buffer = vec![0u8; length];
 
-		reader
-			.read_exact(&mut buffer)
-			.await
-			.context("reading body")?;
+		reader.read_exact(&mut buffer).await.context("reading body")?;
 
 		let mut null = [0u8; 1];
-		reader
-			.read_exact(&mut null)
-			.await
-			.context("reading NULL terminator")?;
+		reader.read_exact(&mut null).await.context("reading NULL terminator")?;
 
 		buffer
 	} else {
 		let mut buffer = Vec::new();
 
-		reader
-			.read_until(b'\0', &mut buffer)
-			.await
-			.context("reading body until NULL")?;
+		reader.read_until(b'\0', &mut buffer).await.context("reading body until NULL")?;
 
 		if buffer.last() == Some(&b'\0') {
 			buffer.pop();
@@ -169,9 +155,7 @@ impl Client {
 		password: &str,
 		client_id: &str,
 	) -> Result<Self> {
-		let stream = TcpStream::connect(address)
-			.await
-			.context(format!("Unable to connect to '{address}'"))?;
+		let stream = TcpStream::connect(address).await.context(format!("Unable to connect to '{address}'"))?;
 
 		stream.set_nodelay(true).context("Setting TCP_NODELAY")?;
 
@@ -192,16 +176,11 @@ impl Client {
 			.context("Write timeout sending CONNECT")?
 			.context("Sending CONNECT")?;
 
-		let response = read_frame(&mut reader)
-			.await?
-			.context("No response from server")?;
+		let response = read_frame(&mut reader).await?.context("No response from server")?;
 		match response.command.as_str() {
 			"CONNECTED" => {}
 			"ERROR" => {
-				bail!(
-					"Server returned ERROR: {}",
-					String::from_utf8_lossy(&response.body)
-				)
+				bail!("Server returned ERROR: {}", String::from_utf8_lossy(&response.body))
 			}
 			other => bail!("Expected CONNECTED, got: {other}"),
 		}
@@ -213,9 +192,7 @@ impl Client {
 			loop {
 				match read_frame(&mut reader).await {
 					Ok(Some(frame)) if frame.command == "MESSAGE" => {
-						if let Some(subscription_id) =
-							frame.get_header("subscription").map(str::to_string)
-						{
+						if let Some(subscription_id) = frame.get_header("subscription").map(str::to_string) {
 							let subscriptions = subscriptions_clone.lock().await;
 
 							if let Some(tx) = subscriptions.get(&subscription_id) {
@@ -251,11 +228,7 @@ impl Client {
 		})
 	}
 
-	pub async fn subscribe(
-		&mut self,
-		destination: &str,
-		extra_headers: Vec<(String, String)>,
-	) -> Result<Subscription> {
+	pub async fn subscribe(&mut self, destination: &str, extra_headers: Vec<(String, String)>) -> Result<Subscription> {
 		let subscription_id = format!("sub-{}", self.next_subscription_id);
 		self.next_subscription_id += 1;
 
@@ -274,11 +247,10 @@ impl Client {
 			.context("Sending SUBSCRIBE")?;
 
 		let (transmit, receive) = mpsc::channel(1024);
-		self.subscriptions
-			.lock()
-			.await
-			.insert(subscription_id, transmit);
+		self.subscriptions.lock().await.insert(subscription_id, transmit);
 
-		Ok(Subscription { receiver: receive })
+		Ok(Subscription {
+			receiver: receive,
+		})
 	}
 }
