@@ -11,6 +11,15 @@ target/
 .env*
 !.env.example
 
-# Example payloads
+# Configuration files
+*.toml
+!*.example.toml
+
+# Agents
+.claude/
+.codex/
+
+# Payloads
 data/
 *.xml
+*.gz

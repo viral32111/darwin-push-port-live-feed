@@ -62,6 +62,8 @@ pub enum PushPortEvent {
 	TrackingId(PushPortTrackingID),   // <trackingID> - Corrected headcode for a berth
 	Alarm(PushPortAlarm),             // <alarm> - Internal alarm set or cleared
 	TimetableId(PushPortTimetableID), // <TimeTableId> - Notifies that a new timetable (reference data file) is available
+	FormationLoading(PushPortFormationLoading), // <formationLoading> - Estimated per-coach passenger loading for a formation at a location
+	ScheduleFormations(PushPortScheduleFormations), // <scheduleFormations> - Coach composition (class, facilities) for a schedule's formation(s)
 }
 
 #[derive(Debug)]
@@ -433,6 +435,48 @@ pub struct PushPortTimetableID {
 }
 
 #[derive(Debug)]
+pub struct PushPortFormationLoading {
+	pub darwin_id: String, // rid
+	pub formation_id: String,
+	pub tiploc: String,
+
+	pub coaches: Vec<PushPortCoachLoading>,
+}
+
+#[derive(Debug)]
+pub struct PushPortCoachLoading {
+	pub coach_number: String,
+
+	pub source: Option<String>,      // Darwin, TD, CIS, Trust, etc.
+	pub source_system: Option<String>, // See reference data for CIS codes
+
+	pub percentage: Option<u8>, // 0-100
+}
+
+#[derive(Debug)]
+pub struct PushPortScheduleFormations {
+	pub darwin_id: String, // rid
+
+	pub formations: Vec<PushPortFormation>,
+}
+
+#[derive(Debug)]
+pub struct PushPortFormation {
+	pub formation_id: String, // fid
+
+	pub coaches: Vec<PushPortFormationCoach>,
+}
+
+#[derive(Debug)]
+pub struct PushPortFormationCoach {
+	pub coach_number: String,
+	pub coach_class: Option<String>,
+
+	pub toilet_status: Option<String>, // InService / NotInService / Unknown
+	pub toilet_type: Option<String>,   // None / Standard / Accessible
+}
+
+#[derive(Debug)]
 pub struct PushPortDisruptionReason {
 	pub code: i16,
 	pub tiploc: Option<String>,
@@ -616,6 +660,16 @@ fn parse_events(reader: &mut Reader<&[u8]>, tag: &[u8]) -> Result<Vec<PushPortEv
 					buffer.clear();
 					let alm = parse_alarm(reader)?;
 					events.push(PushPortEvent::Alarm(alm));
+				}
+
+				b"formationLoading" => {
+					let fl = parse_formation_loading(reader, element)?;
+					events.push(PushPortEvent::FormationLoading(fl));
+				}
+
+				b"scheduleFormations" => {
+					let sf = parse_schedule_formations(reader, element)?;
+					events.push(PushPortEvent::ScheduleFormations(sf));
 				}
 
 				_ => {
@@ -1393,6 +1447,176 @@ fn parse_alarm_data(reader: &mut Reader<&[u8]>) -> Result<PushPortAlarmKind> {
 	}
 
 	kind.ok_or_else(|| anyhow!("<set> had no alarm type"))
+}
+
+fn parse_formation_loading(
+	reader: &mut Reader<&[u8]>,
+	open: &quick_xml::events::BytesStart,
+) -> Result<PushPortFormationLoading> {
+	let rid = str_attr(open, b"rid")?.ok_or_else(|| anyhow!("<formationLoading> missing 'rid'"))?;
+	let fid = str_attr(open, b"fid")?.unwrap_or_default();
+	let tiploc = str_attr(open, b"tpl")?.unwrap_or_default();
+
+	let mut coaches: Vec<PushPortCoachLoading> = Vec::new();
+	let mut buffer = Vec::new();
+
+	loop {
+		match reader.read_event_into(&mut buffer)? {
+			Event::Start(ref element) if local_name(&element.name()) == b"loading" => {
+				let coach_number = str_attr(element, b"coachNumber")?.unwrap_or_default();
+				let source = str_attr(element, b"src")?;
+				let source_system = str_attr(element, b"srcInst")?;
+
+				buffer.clear();
+
+				let text = collect_inner_text(reader, b"loading")?;
+
+				coaches.push(PushPortCoachLoading {
+					coach_number,
+					source,
+					source_system,
+					percentage: text.trim().parse().ok(),
+				});
+			}
+
+			Event::Empty(ref element) if local_name(&element.name()) == b"loading" => {
+				coaches.push(PushPortCoachLoading {
+					coach_number: str_attr(element, b"coachNumber")?.unwrap_or_default(),
+					source: str_attr(element, b"src")?,
+					source_system: str_attr(element, b"srcInst")?,
+					percentage: None,
+				});
+			}
+
+			Event::End(ref element) if local_name(&element.name()) == b"formationLoading" => break,
+			Event::Eof => break,
+
+			_ => {}
+		}
+
+		buffer.clear();
+	}
+
+	Ok(PushPortFormationLoading {
+		darwin_id: rid,
+		formation_id: fid,
+		tiploc,
+		coaches,
+	})
+}
+
+fn parse_schedule_formations(
+	reader: &mut Reader<&[u8]>,
+	open: &quick_xml::events::BytesStart,
+) -> Result<PushPortScheduleFormations> {
+	let rid = str_attr(open, b"rid")?.ok_or_else(|| anyhow!("<scheduleFormations> missing 'rid'"))?;
+
+	let mut formations: Vec<PushPortFormation> = Vec::new();
+	let mut buffer = Vec::new();
+
+	loop {
+		match reader.read_event_into(&mut buffer)? {
+			Event::Start(ref element) if local_name(&element.name()) == b"formation" => {
+				let formation_id = str_attr(element, b"fid")?.unwrap_or_default();
+
+				buffer.clear();
+
+				let coaches = parse_formation_coaches(reader)?;
+
+				formations.push(PushPortFormation {
+					formation_id,
+					coaches,
+				});
+			}
+
+			Event::End(ref element) if local_name(&element.name()) == b"scheduleFormations" => break,
+			Event::Eof => break,
+
+			_ => {}
+		}
+
+		buffer.clear();
+	}
+
+	Ok(PushPortScheduleFormations {
+		darwin_id: rid,
+		formations,
+	})
+}
+
+fn parse_formation_coaches(reader: &mut Reader<&[u8]>) -> Result<Vec<PushPortFormationCoach>> {
+	let mut coaches: Vec<PushPortFormationCoach> = Vec::new();
+	let mut buffer = Vec::new();
+
+	loop {
+		match reader.read_event_into(&mut buffer)? {
+			Event::Start(ref element) if local_name(&element.name()) == b"coach" => {
+				let coach_number = str_attr(element, b"coachNumber")?.unwrap_or_default();
+				let coach_class = str_attr(element, b"coachClass")?;
+
+				buffer.clear();
+
+				let (toilet_status, toilet_type) = parse_formation_coach_toilet(reader)?;
+
+				coaches.push(PushPortFormationCoach {
+					coach_number,
+					coach_class,
+					toilet_status,
+					toilet_type,
+				});
+			}
+
+			Event::Empty(ref element) if local_name(&element.name()) == b"coach" => {
+				coaches.push(PushPortFormationCoach {
+					coach_number: str_attr(element, b"coachNumber")?.unwrap_or_default(),
+					coach_class: str_attr(element, b"coachClass")?,
+					toilet_status: None,
+					toilet_type: None,
+				});
+			}
+
+			Event::End(ref element) if local_name(&element.name()) == b"coaches" => break,
+			Event::Eof => break,
+
+			_ => {}
+		}
+
+		buffer.clear();
+	}
+
+	Ok(coaches)
+}
+
+fn parse_formation_coach_toilet(reader: &mut Reader<&[u8]>) -> Result<(Option<String>, Option<String>)> {
+	let mut toilet_status: Option<String> = None;
+	let mut toilet_type: Option<String> = None;
+
+	let mut buffer = Vec::new();
+
+	loop {
+		match reader.read_event_into(&mut buffer)? {
+			Event::Start(ref element) if local_name(&element.name()) == b"toilet" => {
+				toilet_status = str_attr(element, b"status")?;
+
+				buffer.clear();
+
+				toilet_type = Some(collect_inner_text(reader, b"toilet")?);
+			}
+
+			Event::Empty(ref element) if local_name(&element.name()) == b"toilet" => {
+				toilet_status = str_attr(element, b"status")?;
+			}
+
+			Event::End(ref element) if local_name(&element.name()) == b"coach" => break,
+			Event::Eof => break,
+
+			_ => {}
+		}
+
+		buffer.clear();
+	}
+
+	Ok((toilet_status, toilet_type))
 }
 
 fn parse_disruption_reason(reader: &mut Reader<&[u8]>, end_tag: &[u8]) -> Result<PushPortDisruptionReason> {

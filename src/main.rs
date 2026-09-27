@@ -283,6 +283,20 @@ fn handle_push_port(push_port: PushPort) -> Result<()> {
 					push_port.timestamp, kind, timetable.id, timetable.timetable_file,
 				);
 			}
+
+			PushPortEvent::FormationLoading(loading) => {
+				println!(
+					"[{}]\t{}\tFORMATION LOADING\trid={} fid={} tiploc={} coaches={}",
+					push_port.timestamp, kind, loading.darwin_id, loading.formation_id, loading.tiploc, loading.coaches.len(),
+				);
+			}
+
+			PushPortEvent::ScheduleFormations(formations) => {
+				println!(
+					"[{}]\t{}\tSCHEDULE FORMATIONS\trid={} formations={}",
+					push_port.timestamp, kind, formations.darwin_id, formations.formations.len(),
+				);
+			}
 		}
 	}
 
